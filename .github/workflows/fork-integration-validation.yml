@@ -45,6 +45,7 @@ jobs:
       - name: Native reading regressions and real fixture binaries
         run: |
           cargo test --lib --all-features --locked durable::sqlite::reading_tests
+          cargo test --test scripted --all-features --locked runtime_client::
           cargo build --bins --example document_artifact_fixture --locked
       - name: Regenerate native protocol and verify drift
         id: protocol
