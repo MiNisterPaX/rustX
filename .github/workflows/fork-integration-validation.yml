@@ -29,13 +29,14 @@ jobs:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@v5
       - name: Install locked dependencies
+        working-directory: web-console
         run: |
           corepack enable
-          corepack install --project-directory web-console
-          pnpm --dir protocol/app-server install --frozen-lockfile
-          pnpm --dir tui install --frozen-lockfile
-          pnpm --dir web-console install --frozen-lockfile
-          cd test-support/fake-provider
+          corepack install
+          pnpm --dir ../protocol/app-server install --frozen-lockfile
+          pnpm --dir ../tui install --frozen-lockfile
+          pnpm install --frozen-lockfile
+          cd ../test-support/fake-provider
           uv sync --frozen
       - name: Rust format and strict lint
         run: |
@@ -44,7 +45,6 @@ jobs:
       - name: Native reading regressions and real fixture binaries
         run: |
           cargo test --lib --all-features --locked durable::sqlite::reading_tests
-          cargo test --lib --all-features --locked app_server::schema::tests
           cargo build --bins --example document_artifact_fixture --locked
       - name: Regenerate native protocol and verify drift
         id: protocol
@@ -52,6 +52,7 @@ jobs:
         run: pnpm --dir protocol/app-server check
       - name: Shared protocol and client typechecks
         run: |
+          cargo test --lib --all-features --locked app_server::schema::tests
           pnpm --dir protocol/app-server typecheck
           pnpm --dir tui typecheck
           pnpm --dir web-console typecheck
