@@ -1,0 +1,120 @@
+name: Validate main 457 integration
+
+on:
+  push:
+    branches: [codex/validate-harness-ui-main-457]
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98.1'
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: web-console
+          save-if: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v5
+      - name: Install locked toolchains and dependencies
+        run: |
+          corepack enable
+          corepack install --global pnpm@11.13.1
+          pnpm --version
+          pnpm --dir protocol/app-server install --frozen-lockfile
+          pnpm --dir tui install --frozen-lockfile
+          pnpm --dir web-console install --frozen-lockfile
+          cd test-support/fake-provider
+          uv sync --frozen
+      - name: Prepare the repository Office isolation environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor-profiles libreoffice-writer libreoffice-impress fonts-liberation
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+      - name: Rust formatting and strict lint
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Native reading, statistics and protocol regressions
+        run: |
+          cargo test --lib --all-features --locked durable::sqlite::reading_tests
+          cargo test --lib --all-features --locked scripted_suites::runtime_client::
+          cargo test --lib --all-features --locked agent_statistics::
+          cargo test --lib --all-features --locked agent_duration_tests::
+          cargo test --lib --all-features --locked scripted_suites::app_server::
+          cargo build --bins --example document_artifact_fixture --locked
+      - name: Regenerate the authoritative protocol and test its schema
+        id: protocol
+        continue-on-error: true
+        run: |
+          pnpm --dir protocol/app-server check
+      - name: Public schema and all client typechecks
+        run: |
+          cargo test --lib --all-features --locked app_server::schema::tests
+          pnpm --dir protocol/app-server typecheck
+          pnpm --dir tui typecheck
+          pnpm --dir web-console typecheck
+      - name: TUI protocol and export regressions
+        working-directory: tui
+        run: node --test test/app-server-client.test.ts test/session-export.test.ts
+      - name: Full Web deterministic tests
+        id: webtests
+        continue-on-error: true
+        working-directory: web-console
+        run: pnpm test
+      - name: Translation, provenance and notices
+        working-directory: web-console
+        run: |
+          pnpm check:i18n
+          pnpm check:provenance
+      - name: Refresh affected references in the digest-pinned Linux browser
+        working-directory: web-console
+        run: >-
+          pnpm test:e2e:update
+          test/e2e/agent.spec.ts test/e2e/settings-presentation.spec.ts
+          test/e2e/fork-point.spec.ts test/e2e/compaction-summary.spec.ts
+          test/e2e/reading.spec.ts test/e2e/compaction.spec.ts
+          test/e2e/cold-model.spec.ts test/e2e/subagents.spec.ts test/e2e/mcp-scope.spec.ts
+      - name: Ordinary strict browser acceptance
+        working-directory: web-console
+        run: >-
+          pnpm test:e2e
+          test/e2e/agent.spec.ts test/e2e/settings-presentation.spec.ts
+          test/e2e/fork-point.spec.ts test/e2e/compaction-summary.spec.ts
+          test/e2e/reading.spec.ts test/e2e/compaction.spec.ts
+          test/e2e/cold-model.spec.ts test/e2e/subagents.spec.ts test/e2e/mcp-scope.spec.ts
+      - name: Require clean protocol generation and complete Web tests
+        if: always()
+        run: |
+          test '${{ steps.protocol.outcome }}' = success
+          test '${{ steps.webtests.outcome }}' = success
+      - name: Preserve authoritative outputs and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-457-integration-evidence
+          path: |
+            protocol/app-server/v39.schema.json
+            protocol/app-server/v39.ts
+            protocol/app-server/fixtures.json
+            protocol/app-server/fixtures.ts
+            web-console/test/e2e/*-snapshots/
+            web-console/test-results/
+          if-no-files-found: error
