@@ -57,8 +57,9 @@ jobs:
           cargo test --lib --all-features --locked durable::sqlite::reading_tests
           cargo test --lib --all-features --locked scripted_suites::runtime_client::
           cargo test --lib --all-features --locked agent_statistics::
-          cargo test --lib --all-features --locked agent_duration_tests::
-          cargo test --lib --all-features --locked scripted_suites::app_server::
+          cargo test --lib --all-features --locked agent_duration_follows_driver_evidence
+          cargo test --lib --all-features --locked agent_duration_freezes_at_durable_evidence
+          cargo test --lib --all-features --locked local_runtime::session_runtime_manager::tests::protocol::
           cargo build --bins --example document_artifact_fixture --locked
       - name: Regenerate the authoritative protocol and test its schema
         id: protocol
