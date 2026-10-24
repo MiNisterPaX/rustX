@@ -550,11 +550,11 @@ schema are rejected rather than decoded with missing or invented workspace
 authority. The review-only
 intermediate schema history was never a supported format.
 
-SQLite schema 77 introduced request fingerprints bound to the native JSON Schema capability
+SQLite schema 80 binds request fingerprints to the native JSON Schema capability
 and the per-Call prepared response schema and strategy. These semantics also
-change fingerprints for text requests. Schema 78 adds the bounded native
-`WorkflowNodeWaiting` Journal vocabulary used to publish wait state and reserved
-Auxiliary Call correlation. Stores from schema 77 or earlier fail with
+change fingerprints for text requests. Schema 80 also admits bounded native
+`WorkflowNodeWaiting` Journal facts and reserved Auxiliary Call identities.
+Stores from schema 79 or earlier fail with
 `SchemaVersionMismatch` at open, before historical reconstruction; no legacy
 fingerprint comparison, migration or compatibility reader is available.
 The Event envelope remains version 1; its framing did not change.
@@ -7855,6 +7855,44 @@ when required by lineage/dependency closure; no stronger global audit is implied
   or failed outcomes without authorizing a new checkpoint commit.
 - See [Auxiliary request facts and inspection](auxiliary-execution.md) for bounds,
   uncertainty, source ownership and validation.
+
+## Scheduler temporal ownership
+
+- An occurrence fires only when its trigger receipt, revision advancement and
+  ordinary durable inbound or pinned Workflow Accepted request commit together.
+  A timer observation is not admission.
+- Scheduler never calls ModelAdapter or appends canonical history. Runtime-origin
+  scheduled messages confer no Human mutation grant.
+- Cold StorageOnly and runtime writers share one registry slot per conversation.
+  Runtime residency remains a separate per-Session constraint. Writer absence
+  requires explicit connection closure and allocation release; an uncertain
+  retirement cannot be replaced or treated as absent during deletion.
+- Native pending correlation owns outstanding-target capacity across schedule
+  updates, deletion and display pruning. One outstanding target per schedule and
+  at most 256 per conversation are checked inside the admission transaction.
+- Stable command receipts preserve the first successful relative-time decision.
+  IDs are never reused and no-op mutations do not consume a revision. Human
+  request scopes share at most eight committed mutations; retries, deletion and
+  retention cannot reset or transfer the persisted budget. A backend authority
+  value is not proof of a live root Human request.
+- Discovery reads are bounded, cancellable and physically counted through actual
+  release. Unavailable sources retain last-success facts; live catalog authority
+  alone removes membership. Per-conversation hints and periodic finite passes
+  preserve progress even when notifications are lost. Cron uses pinned calendar
+  policy and preserves committed UTC candidates across timezone-data changes.
+- Workflow Claim is a unique native execution capability. Required node receipts
+  precede effects. Reopen/reconcile never replays a Claimed graph; missing native
+  physical proof retains its capacity, resource ownership and deletion blocker.
+  A recovered result is OutcomeUnknown, never a fabricated successful Return.
+- Scheduled Workflow/interaction origins name the durable start directly and
+  contain no synthetic Attempt, ToolCall or turn. Human model mutation authority
+  is borrowed only from fresh native root request scope; Runtime input preserves
+  that scope without replenishing its lifetime eight-mutation budget.
+- Enabled schedules and nonterminal Workflow starts block Session deletion, and
+  schedule generation participates in delete-preview authority. Fork/clone do
+  not copy definitions, starts, receipts or temporal control authority.
+- Drain closes the final Scheduler commit gate and joins driver/read/storage/load
+  ownership before reporting quiescence. See [Scheduler](scheduler.md).
 
 ## Classification and BTW delivery invariants
 

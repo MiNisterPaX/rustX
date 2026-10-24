@@ -592,7 +592,7 @@ pub fn fixtures() -> Vec<ProtocolMessage> {
     })));
     let run = crate::runtime::workflow::WorkflowRunId {
         conversation_id: target.conversation_id.clone(),
-        attempt_id: crate::runtime::identity::AttemptId::new("attempt-fixture"),
+        origin: (crate::runtime::identity::AttemptId::new("attempt-fixture")).into(),
         invocation: EXACT,
     };
     fixtures.push(ProtocolMessage::Response(Response::Failure(Failure {
@@ -624,7 +624,9 @@ pub fn fixtures() -> Vec<ProtocolMessage> {
                             program_digest: "digest-fixture".into(),
                             resource_revision:
                                 crate::runtime::identity::RuntimeResourceRevision::new(EXACT),
-                            tool_call_id: crate::runtime::identity::ToolCallId::new("call-fixture"),
+                            tool_call_id: Some(crate::runtime::identity::ToolCallId::new(
+                                "call-fixture",
+                            )),
                             state: crate::runtime::workflow::read_model::WorkflowState::Running,
                             instances: Vec::new(),
                             omitted_instances: 0,
@@ -702,6 +704,7 @@ pub fn fixtures() -> Vec<ProtocolMessage> {
         })));
     }
     workflow_fixtures(&mut fixtures);
+    schedule_fixtures(&mut fixtures);
     fixtures
 }
 
@@ -943,6 +946,144 @@ fn workflow_fixtures(fixtures: &mut Vec<ProtocolMessage>) {
     })));
 }
 
+#[allow(clippy::too_many_lines)] // Native Scheduler wire examples include exact integer domains.
+fn schedule_fixtures(fixtures: &mut Vec<ProtocolMessage>) {
+    use crate::scheduler::{
+        ScheduleBinding, ScheduleCommand, ScheduleId, ScheduleMutation, ScheduleSnapshot,
+        ScheduleSpec, ScheduleState, ScheduleTiming,
+    };
+    let session_id =
+        crate::runtime::identity::SessionId::new("ses_00000000-0000-7000-8000-000000000001");
+    let node_id =
+        crate::runtime::identity::SessionNodeId::new("node_00000000-0000-7000-8000-000000000001");
+    let conversation_id =
+        crate::runtime::identity::ConversationId::new("conv_00000000-0000-7000-8000-000000000001");
+    let id = ScheduleId {
+        conversation_id: conversation_id.clone(),
+        ordinal: 9_007_199_254_740_993,
+    };
+    let due = chrono::DateTime::parse_from_rfc3339("2026-10-24T10:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let snapshot = ScheduleSnapshot {
+        id: id.clone(),
+        binding: ScheduleBinding {
+            session_id: session_id.clone(),
+            node_id: node_id.clone(),
+            conversation_id,
+        },
+        revision: 9_007_199_254_740_993,
+        title: "Native reminder".into(),
+        target: crate::scheduler::ScheduleTarget::ConversationInbound {
+            text: "Read this reminder separately".into(),
+        },
+        spec: ScheduleSpec::At { at_utc: due },
+        state: ScheduleState::Enabled,
+        next_due_utc: Some(due),
+        last_trigger: None,
+        completed_at: None,
+        completion_reason: None,
+        last_failure: None,
+    };
+    for (name, method) in [
+        (
+            "schedule-list",
+            Method::ScheduleList {
+                session_id: session_id.clone(),
+                node_id: node_id.clone(),
+                after_ordinal: id.ordinal,
+                limit: 100,
+            },
+        ),
+        (
+            "schedule-get",
+            Method::ScheduleGet {
+                session_id: session_id.clone(),
+                node_id: node_id.clone(),
+                id: id.clone(),
+            },
+        ),
+        (
+            "schedule-command",
+            Method::ScheduleCommand {
+                session_id: session_id.clone(),
+                node_id: node_id.clone(),
+                command: ScheduleCommand {
+                    command_id: "stable-reminder-command".into(),
+                    mutation: ScheduleMutation::Create {
+                        title: "Native reminder".into(),
+                        text: "Read this reminder separately".into(),
+                        timing: ScheduleTiming::After { seconds: 600 },
+                    },
+                },
+            },
+        ),
+        (
+            "schedule-cas",
+            Method::ScheduleCommand {
+                session_id: session_id.clone(),
+                node_id: node_id.clone(),
+                command: ScheduleCommand {
+                    command_id: "stable-disable-command".into(),
+                    mutation: ScheduleMutation::SetEnabled {
+                        id,
+                        expected_revision: 9_007_199_254_740_993,
+                        enabled: false,
+                    },
+                },
+            },
+        ),
+        (
+            "schedule-recovery",
+            Method::ScheduleRecoverStorage {
+                session_id,
+                node_id,
+            },
+        ),
+    ] {
+        fixtures.push(ProtocolMessage::Request(Box::new(Request {
+            jsonrpc: JsonRpcVersion::V2,
+            id: RequestId::String(name.into()),
+            call: method,
+        })));
+    }
+    for (name, result) in [
+        (
+            "schedule-list",
+            MethodResult::Schedules {
+                schedules: vec![crate::scheduler::ScheduleHeader::from(snapshot.clone())],
+                next_ordinal: Some(snapshot.id.ordinal),
+            },
+        ),
+        (
+            "schedule-get",
+            MethodResult::Schedule {
+                schedule: Some(snapshot),
+            },
+        ),
+        (
+            "schedule-command",
+            MethodResult::ScheduleCommand {
+                result: crate::scheduler::ScheduleCommandResult::Capacity,
+            },
+        ),
+        (
+            "schedule-recovery",
+            MethodResult::ScheduleStorageRecovered {
+                generation: 9_007_199_254_740_993,
+            },
+        ),
+    ] {
+        fixtures.push(ProtocolMessage::Response(Response::Success(Box::new(
+            Success {
+                jsonrpc: JsonRpcVersion::V2,
+                id: RequestId::String(name.into()),
+                result,
+            },
+        ))));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1146,9 +1287,9 @@ mod tests {
             })
             .collect();
         generations.sort();
-        assert_eq!(generations, ["v55.schema.json", "v55.ts"]);
+        assert_eq!(generations, ["v57.schema.json", "v57.ts"]);
         assert_eq!(
-            std::fs::read_to_string(root.join("v55.schema.json")).unwrap(),
+            std::fs::read_to_string(root.join("v57.schema.json")).unwrap(),
             format!(
                 "{}\n",
                 serde_json::to_string_pretty(&protocol_schema()).unwrap()

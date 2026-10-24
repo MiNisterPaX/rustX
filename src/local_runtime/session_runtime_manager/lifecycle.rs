@@ -61,6 +61,7 @@ impl SessionRuntimeManager {
                         self.rebind_configuration_runtime(session);
                         return Ok(identity);
                     }
+                    Some(Entry::StorageOnly(storage)) => storage.retirement.clone(),
                     Some(Entry::Loading(flight) | Entry::Unloading { flight, .. }) => {
                         flight.clone()
                     }
@@ -89,6 +90,108 @@ impl SessionRuntimeManager {
                     .check_session(session, runtime.conversation_id())?;
                 self.rebind_configuration_runtime(session);
                 return Ok(runtime);
+            }
+        }
+    }
+
+    pub(super) async fn activate_scheduled_target(
+        &self,
+        binding: &crate::scheduler::ScheduleBinding,
+        trigger: &crate::scheduler::ScheduleTriggerId,
+    ) -> Result<(), RuntimeManagerError> {
+        if trigger.schedule_id.conversation_id != binding.conversation_id {
+            return Err(error("scheduled target binding mismatch"));
+        }
+        loop {
+            let flight = {
+                let mut state = self.registry.0.lock().expect("registry mutex");
+                if !state.schedule_open {
+                    return Err(error("Scheduler admission is closed"));
+                }
+                state.check_session(&binding.session_id, &binding.conversation_id)?;
+                #[cfg(test)]
+                state
+                    .schedule_activation_started
+                    .send_replace(Some(binding.conversation_id.clone()));
+                match state.entries.get(&binding.conversation_id) {
+                    Some(Entry::Loaded(resident)) => {
+                        let wake = resident.scheduled_wake.clone();
+                        drop(state);
+                        wake.notify_one();
+                        return Ok(());
+                    }
+                    Some(Entry::Loading(flight) | Entry::Unloading { flight, .. }) => {
+                        flight.clone()
+                    }
+                    Some(Entry::StorageOnly(storage)) => storage.retirement.clone(),
+                    None => {
+                        state.reserve()?;
+                        let flight = Flight::new();
+                        state
+                            .by_session
+                            .insert(binding.session_id.clone(), binding.conversation_id.clone());
+                        state.entries.insert(
+                            binding.conversation_id.clone(),
+                            Entry::Loading(flight.clone()),
+                        );
+                        let terminal = TerminalGuard::new(
+                            self,
+                            binding.conversation_id.clone(),
+                            flight.clone(),
+                            WriterCertainty::Absent,
+                        );
+                        let owner = self.clone();
+                        let binding = binding.clone();
+                        let trigger = trigger.clone();
+                        tokio::spawn(async move {
+                            let result = async {
+                                let access = owner
+                                    .sessions
+                                    .acquire_session(&binding.session_id, Some(&binding.node_id))
+                                    .await
+                                    .map_err(error)?;
+                                if access.node.conversation_id != binding.conversation_id {
+                                    return Err(error("scheduled destination changed"));
+                                }
+                                let id = binding.conversation_id.clone();
+                                let path = access.database_path.clone();
+                                let allocation = access.allocation.clone();
+                                let pending = tokio::task::spawn_blocking(move || {
+                                    use crate::durable::ScheduleStore;
+                                    let store =
+                                        crate::durable::SqliteConversationStore::open_existing(
+                                            id, &path,
+                                        )
+                                        .map_err(error)?
+                                        .with_lifecycle(allocation);
+                                    Ok::<_, RuntimeManagerError>(
+                                        store
+                                            .schedule_summary()
+                                            .map_err(error)?
+                                            .ready
+                                            .contains(&trigger),
+                                    )
+                                })
+                                .await
+                                .map_err(error)??;
+                                if !pending {
+                                    return Ok(None);
+                                }
+                                owner.compose(access).await.map(Some)
+                            }
+                            .await;
+                            terminal.finish(result);
+                        });
+                        flight
+                    }
+                }
+            };
+            // A successful cold admission whose target was already adopted is a no-op.
+            match flight.wait().await {
+                Outcome::Resident(_) | Outcome::WriterAbsent(Ok(())) => return Ok(()),
+                other => {
+                    other.operation_result()?;
+                }
             }
         }
     }
@@ -224,6 +327,19 @@ impl SessionRuntimeManager {
         .map_err(error)?;
         core.runtime()
             .restore_configuration_binding(paths.binding_revision);
+        core.runtime()
+            .tool_runtime()
+            .schedule()
+            .bind(
+                crate::scheduler::ScheduleBinding {
+                    session_id: access.session.id.clone(),
+                    node_id: access.node.id.clone(),
+                    conversation_id: access.node.conversation_id.clone(),
+                },
+                self.schedule_dirty.clone(),
+                self.schedule_changed.clone(),
+            )
+            .map_err(error)?;
         #[cfg(test)]
         if let Some(gate) = self
             .probe(&access.node.conversation_id)
@@ -312,6 +428,7 @@ impl SessionRuntimeManager {
                 resident: resident.clone(),
                 registry: Arc::downgrade(&self.registry),
             }),
+            scheduled_wake: composition.runtime().scheduled_wake(),
             composition: Mutex::new(Some(composition)),
         }))
     }
@@ -332,6 +449,7 @@ impl SessionRuntimeManager {
                 let mut registry = self.registry.0.lock().expect("registry mutex");
                 match registry.entries.get(id) {
                     None => return Outcome::WriterAbsent(Ok(())),
+                    Some(Entry::StorageOnly(storage)) => storage.retirement.clone(),
                     Some(Entry::Loading(flight) | Entry::Unloading { flight, .. }) => {
                         #[cfg(test)]
                         if let Some(probe) = registry.probes.get(id) {
@@ -431,6 +549,7 @@ impl SessionRuntimeManager {
                         self.spawn_load(id, session.clone(), target.id, flight.clone());
                         (flight, true)
                     }
+                    Some(Entry::StorageOnly(storage)) => (storage.retirement.clone(), false),
                     Some(Entry::Loading(flight) | Entry::Unloading { flight, .. }) => {
                         (flight.clone(), false)
                     }

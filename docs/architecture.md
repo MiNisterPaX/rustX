@@ -7097,6 +7097,25 @@ transport/storage bounds and receipt resolution into trusted references. The
 Subagent registry validates it before guidance admission or activation
 reservation; Runtime does not depend on Session upload policy.
 
+## Native Scheduler temporal admissions
+
+The App Server process owns one supervised wake loop over conversation-owned
+schedule definitions. The manager's finite StorageOnly registry flight lets cold
+nodes accept work without composing Agents or occupying runtime residency. Hot
+writes retain the existing operation lease and lifecycle/publication guards.
+The existing inbox transaction participant commits scheduled ordinary inbound,
+trigger receipt, schedule advancement, and generation atomically. Execution and
+canonical adoption stay with ConversationRuntime.
+
+The native surface supports one-shots, fixed-rate intervals and pinned five-field
+Cron with explicit IANA zones. Reconciliation uses bounded cancellable probes,
+per-conversation dirty hints and generation fencing. Command receipts persist
+Human-request budgets independently of display history. Scheduled Workflow
+ownership, live model grants, protocol/UI controls and supported-host performance
+acceptance remain in the issue #85 implementation sequence. See
+[Scheduler](scheduler.md) for the implemented ownership, capacity, recovery, and
+drain contract.
+
 ## External auxiliary consumers
 
 Classification and BTW use the existing native auxiliary executor with a bounded ephemeral result owner. Named Runtime Client and App Server boundaries transfer admission before returning a receipt. See [consumer ownership, commit points and capacity](auxiliary-consumers.md); App Server scopes do not own inference, and ephemeral stream records do not advance the native cursor.
