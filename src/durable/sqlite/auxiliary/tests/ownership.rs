@@ -1812,6 +1812,7 @@ fn business_sources_may_follow_the_frozen_input_cut() {
             "later-operation-start".into(),
             RuntimeEvent::CompactionStarted {
                 operation_id: operation_id.clone(),
+                mode: crate::context::operation::CompactionMode::Blocking,
             },
         ))
         .unwrap();

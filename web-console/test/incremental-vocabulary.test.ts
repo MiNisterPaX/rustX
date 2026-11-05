@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { checkpointSnapshot, transitionFacts, foldRuntimeEvent as fold } from '../../protocol/app-server/projection';
-import type { RuntimeClientEvent as Event, RuntimeClientCheckpoint } from '../../protocol/app-server/v73';
+import type { RuntimeClientEvent as Event, RuntimeClientCheckpoint } from '../../protocol/app-server/v74';
 import capture from './fixtures/incremental-native.json';
 import { checkpoint, interaction, snapshot } from './fixture';
 
@@ -44,6 +44,7 @@ it('every Session event variant has an explicit transition or documented domain 
   apply({ type: 'interaction_audit_requested', transcript_cursor: '8', audit: { ...audit, subject: { type: 'approval', invocation_id: { caller: 'agent', call_id: 'c' }, tool_id: 'bash', tool_name: 'bash', arguments_digest: 'd', reason: 'approval' } } });
   apply({ type: 'interaction_audit_settled', transcript_cursor: '9', audit: { ...audit, settlement: { type: 'approved' } } });
   expect(state).toBe(beforeAudit); // Durable decorated entries arrive in read_domains_updated.
+  apply({ type: 'context_compaction_operation_updated', context: { compaction_in_progress: false, compaction_count: 0, compaction_operations: [{ status: { operation_id: 'op', admission_generation: '1', triggering_attempt_id: null, waiting_attempt_id: null, phase: 'ready', accepted_fragments: 1, diagnostic: null }, live: true }] } }); expect(state.context?.compaction_operations?.[0].status.phase).toBe('ready');
   apply({ type: 'context_compaction_started', context: { compaction_in_progress: true, compaction_count: 0 } }); expect(state.context?.compaction_in_progress).toBe(true);
   apply({ type: 'context_compaction_progressed', context: { compaction_in_progress: true, compaction_count: 1 } }); expect(state.context?.compaction_count).toBe(1);
   apply({ type: 'context_compaction_cancelled', context: { compaction_in_progress: false, compaction_count: 1 } }); expect(state.context?.compaction_in_progress).toBe(false);
@@ -86,7 +87,7 @@ it('every Session event variant has an explicit transition or documented domain 
     read_domains_updated: true, trace_changed: true, goal_changed: true, workflows_updated: true,
     attempt_started: true, attempt_settled: true, attempt_turn_updated: true, attempt_usage_updated: true,
     interaction_pending: true, interaction_settled: true, interaction_removed: true, interaction_audit_requested: true, interaction_audit_settled: true,
-    context_compaction_started: true, context_compaction_progressed: true, context_compaction_cancelled: true, context_compaction_skipped: true, context_compaction_failed: true, context_compacted: true,
+    context_compaction_operation_updated: true, context_compaction_started: true, context_compaction_progressed: true, context_compaction_cancelled: true, context_compaction_skipped: true, context_compaction_failed: true, context_compacted: true,
     assistant_message_started: true,
     tool_call_started: true, tool_call_assembled: true, assistant_publication_settled: true, assistant_publication_deferred_settled: true,
     tool_execution_started: true, tool_execution_progress: true, tool_execution_settled: true, message_committed: true,

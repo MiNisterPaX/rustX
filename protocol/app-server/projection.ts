@@ -1,6 +1,6 @@
 /** Pure Runtime Client read-model fold. Routing/cursor continuity belongs to
  * the attachment owner. No I/O, providers, React, or execution authority. */
-import type { RuntimeClientSnapshot as Snapshot, RuntimeClientEvent as Event, InFlightBlock, ForegroundToolExecution, ContentRef, ContentBinding, CanonicalContentLocator, RuntimeClientCheckpoint, ProjectionMetadata, RuntimeClientCursor } from './v73.ts';
+import type { RuntimeClientSnapshot as Snapshot, RuntimeClientEvent as Event, InFlightBlock, ForegroundToolExecution, ContentRef, ContentBinding, CanonicalContentLocator, RuntimeClientCheckpoint, ProjectionMetadata, RuntimeClientCursor } from './v74.ts';
 import { canonicalLocatorKey, contentSourceKey, sameContentRef } from './content-identity.ts';
 
 const cuts = new WeakMap<Snapshot, ProjectionMetadata>();
@@ -264,6 +264,7 @@ function foldOrdinaryEvent(state: Snapshot, event: Exclude<Event, {type: 'projec
     // Durable audit/response decorations arrive in the native read-domain cut.
     case 'interaction_audit_requested':
     case 'interaction_audit_settled': return state;
+    case 'context_compaction_operation_updated': return { ...state, context: event.context };
     case 'context_compaction_started': return { ...state, context: event.context };
     case 'context_compaction_progressed': return { ...state, context: event.context };
     case 'context_compaction_cancelled': return { ...state, context: event.context };

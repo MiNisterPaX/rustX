@@ -768,6 +768,7 @@ fn occupancy_compaction_lookup_work_is_bounded_across_history_growth() {
     for index in 1..=256 {
         let cut = store.compaction_resource_cut().unwrap();
         let candidate = CheckpointCandidate {
+            prefix_coverage: None,
             checkpoint_id: crate::runtime::identity::CheckpointId::new(format!(
                 "occupancy-{index}"
             )),

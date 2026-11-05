@@ -241,6 +241,7 @@ pub(super) fn link_summary_generation(
             timestamp: Utc::now(),
             event: RuntimeEvent::CompactionStarted {
                 operation_id: operation_id.clone(),
+                mode: crate::context::operation::CompactionMode::Blocking,
             },
         })
         .unwrap();
@@ -328,6 +329,7 @@ pub(super) fn historical_summary_audit_fixture(
             timestamp: Utc::now(),
             event: RuntimeEvent::CompactionStarted {
                 operation_id: operation_id.clone(),
+                mode: crate::context::operation::CompactionMode::Blocking,
             },
         })
         .unwrap();

@@ -474,6 +474,7 @@ fn event(event: &crate::events::types::RuntimeEvent) -> Value {
         | RuntimeEvent::ToolExecutionSettlementObserved { .. }
         | RuntimeEvent::ToolMessageCommitted { .. }
         | RuntimeEvent::CompactionStarted { .. }
+        | RuntimeEvent::CompactionOperationUpdated { .. }
         | RuntimeEvent::CompactionChunkAccepted { .. }
         | RuntimeEvent::CompactionSkipped { .. }
         | RuntimeEvent::CompactionCancelled { .. }

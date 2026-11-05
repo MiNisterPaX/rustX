@@ -47,6 +47,7 @@ fn start_auxiliary_call(
                 timestamp: chrono::Utc::now(),
                 event: RuntimeEvent::CompactionStarted {
                     operation_id: operation_id.clone(),
+                    mode: crate::context::operation::CompactionMode::Blocking,
                 },
             })
             .unwrap();
@@ -115,6 +116,7 @@ fn begin_compaction(store: &SqliteConversationStore, operation_id: &CompactionOp
             timestamp: chrono::Utc::now(),
             event: RuntimeEvent::CompactionStarted {
                 operation_id: operation_id.clone(),
+                mode: crate::context::operation::CompactionMode::Blocking,
             },
         })
         .unwrap();
@@ -468,6 +470,7 @@ fn candidate(
     }
     let cut = store.compaction_resource_cut().unwrap();
     CheckpointCandidate {
+        prefix_coverage: None,
         checkpoint_id: CheckpointId::new(id),
         expected_head: store
             .projection_head()
@@ -488,6 +491,7 @@ fn commit_input(
 ) -> ProjectionCommitInput {
     let operation_id = CompactionOperationId::new(operation);
     ProjectionCommitInput {
+        prefix_proof: None,
         grant: signal
             .authorize_compaction_commit(operation_id.clone())
             .expect("commit granted"),
@@ -625,6 +629,7 @@ fn unrelated_journal_appends_and_post_base_canonical_growth_do_not_stale_a_candi
             timestamp: chrono::Utc::now(),
             event: RuntimeEvent::CompactionStarted {
                 operation_id: input.operation_id.clone(),
+                mode: crate::context::operation::CompactionMode::Blocking,
             },
         })
         .unwrap();
@@ -1475,6 +1480,7 @@ fn historical_head_validation_preserves_growth_same_ledger_and_old_receipts() {
             timestamp: chrono::Utc::now(),
             event: RuntimeEvent::CompactionStarted {
                 operation_id: CompactionOperationId::new("unrelated"),
+                mode: crate::context::operation::CompactionMode::Blocking,
             },
         })
         .unwrap();
@@ -2796,6 +2802,7 @@ fn summary_generation_dependency_accepts_success_after_resource_capture_and_pres
     );
     let receipt = store
         .commit_projection(ProjectionCommitInput {
+            prefix_proof: None,
             grant: CancellationSignal::new()
                 .authorize_compaction_commit(operation.clone())
                 .unwrap(),
@@ -3755,6 +3762,7 @@ fn summary_generation_dependency_rejects_missing_wrong_and_future_prerequisites(
     assert!(
         store
             .commit_projection(ProjectionCommitInput {
+                prefix_proof: None,
                 grant: CancellationSignal::new()
                     .authorize_compaction_commit(operation.clone())
                     .unwrap(),
@@ -3798,6 +3806,7 @@ fn summary_generation_dependency_rejects_missing_wrong_and_future_prerequisites(
     assert!(
         store
             .commit_projection(ProjectionCommitInput {
+                prefix_proof: None,
                 grant: CancellationSignal::new()
                     .authorize_compaction_commit(wrong_operation.clone())
                     .unwrap(),
@@ -3828,6 +3837,7 @@ fn summary_generation_dependency_rejects_missing_wrong_and_future_prerequisites(
     assert!(
         store
             .commit_projection(ProjectionCommitInput {
+                prefix_proof: None,
                 grant: CancellationSignal::new()
                     .authorize_compaction_commit(future_operation.clone())
                     .unwrap(),
@@ -3876,6 +3886,7 @@ fn summary_generation_dependency_rejects_missing_wrong_and_future_prerequisites(
     assert!(
         store
             .commit_projection(ProjectionCommitInput {
+                prefix_proof: None,
                 grant: CancellationSignal::new()
                     .authorize_compaction_commit(wrong_purpose_operation.clone())
                     .unwrap(),

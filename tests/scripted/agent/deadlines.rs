@@ -111,6 +111,7 @@ async fn make_execution<'a>(
         capability.into_lease(),
         cancellation,
         crate::agent::execution::AgentExecutionRuntimePolicy {
+            asynchronous: None,
             workspace_changes: None,
             subagent_context: None,
             workflow_output: None,
@@ -750,6 +751,7 @@ async fn publication_flush_wins_before_timeout_at_the_same_cut_and_does_not_rese
         capability.into_lease(),
         &cancellation,
         crate::agent::execution::AgentExecutionRuntimePolicy {
+            asynchronous: None,
             workspace_changes: None,
             subagent_context: None,
             workflow_output: None,
@@ -849,6 +851,7 @@ async fn provider_progress_wins_when_ready_with_response_timeout() {
         capability.into_lease(),
         &cancellation,
         crate::agent::execution::AgentExecutionRuntimePolicy {
+            asynchronous: None,
             workspace_changes: None,
             subagent_context: None,
             workflow_output: None,
@@ -938,6 +941,7 @@ async fn cancellation_wins_same_cut_and_retains_cancellation_provenance() {
         capability.into_lease(),
         &cancellation,
         crate::agent::execution::AgentExecutionRuntimePolicy {
+            asynchronous: None,
             workspace_changes: None,
             subagent_context: None,
             workflow_output: None,

@@ -314,7 +314,8 @@ fn count_conversation_store_open() {
 /// Version 85 records Session configuration commits as Journal facts with
 /// their own transcript positions.
 /// Version 86 adds sequential Summary progress and exact physical Call lineage.
-pub const SQLITE_SCHEMA_VERSION: i64 = 86;
+/// Version 87 adds independent Compaction operation and authenticated coverage facts.
+pub const SQLITE_SCHEMA_VERSION: i64 = 87;
 
 /// One operation in a deterministic admission fault script.
 #[cfg(test)]

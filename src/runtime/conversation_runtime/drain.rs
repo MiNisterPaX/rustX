@@ -238,6 +238,7 @@ impl RuntimeInner {
                             .cancellation
                             .request_cancel(CancellationReason::RuntimeShutdown);
                     }
+                    self.cancel_async_compaction();
                     let transitioned = self.lifecycle.begin_drain();
                     debug_assert!(
                         transitioned,
@@ -496,6 +497,7 @@ impl RuntimeInner {
             tracing::warn!("Session title owner exited without publishing its optional label");
         }
         self.reap_manual_tail(true).await;
+        self.reap_async_compaction(true).await;
         loop {
             self.wait_for_foreground_operation().await;
 

@@ -96,6 +96,9 @@ impl RuntimeInner {
             .expect("admission validated this model against the session context policy");
         let context_runtime = context_runtime.with_runtime_resources(&resources);
         let execution_policy = crate::agent::execution::AgentExecutionRuntimePolicy {
+            asynchronous: Some(Arc::new(
+                super::asynchronous_compaction::RuntimeCompactionCoordinator(Arc::downgrade(self)),
+            )),
             workspace_changes: if self
                 .state
                 .lock()
@@ -330,6 +333,9 @@ impl RuntimeInner {
         if let Some(gate) = attempt_exit_gate {
             gate.enter();
         }
+        // A ready independent Summary may have arrived while this Attempt
+        // held the conversation. Settlement opens the idle installation cut.
+        self.wake.notify.notify_one();
         self.admit_next_attempt();
     }
 }

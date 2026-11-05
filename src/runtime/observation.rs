@@ -2166,6 +2166,7 @@ pub(crate) fn trace_fact_requires_publication(event: &RuntimeEvent) -> bool {
             ..
         } => true,
         RuntimeEvent::CompactionSkipped { .. }
+        | RuntimeEvent::CompactionOperationUpdated { .. }
         | RuntimeEvent::CompactionCancelled { .. }
         | RuntimeEvent::CompactionChunkAccepted { .. }
         | RuntimeEvent::ModelRequestStarted { .. }

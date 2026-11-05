@@ -215,7 +215,10 @@ fn read_compaction(
                         )
                     })?;
                 context.compaction_progress = match event {
-                    crate::events::types::RuntimeEvent::CompactionStarted { operation_id } => Some(
+                    crate::events::types::RuntimeEvent::CompactionStarted {
+                        operation_id,
+                        mode,
+                    } if mode != crate::context::operation::CompactionMode::Proactive => Some(
                         crate::runtime_client::snapshot::RuntimeClientCompactionProgress {
                             operation_id,
                             accepted_fragments: 0,
@@ -236,6 +239,7 @@ fn read_compaction(
                             generation,
                         },
                     ),
+                    crate::events::types::RuntimeEvent::CompactionStarted { .. } => None,
                     _ => {
                         return Err(ConversationStoreError::InvalidReference(
                             "invalid compaction observation family".into(),
@@ -256,6 +260,29 @@ fn read_compaction(
             }
             _ => {}
         }
+    }
+    // A fresh process does not own unfinished historical work.
+    context.compaction_operations = store
+        .latest_compaction_operations(cut.read.journal)?
+        .into_iter()
+        .map(
+            |status| crate::runtime_client::snapshot::RuntimeClientCompactionOperation {
+                status,
+                live: false,
+            },
+        )
+        .collect();
+    if context
+        .compaction_progress
+        .as_ref()
+        .is_some_and(|progress| {
+            context
+                .compaction_operations
+                .iter()
+                .any(|entry| entry.status.operation_id == progress.operation_id)
+        })
+    {
+        context.compaction_progress = None;
     }
     if let Some(compaction) = read_latest_compaction(store, cut)? {
         context.latest_compaction = Some(compaction);

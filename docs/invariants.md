@@ -563,7 +563,7 @@ schema are rejected rather than decoded with missing or invented workspace
 authority. The review-only
 intermediate schema history was never a supported format.
 
-SQLite schema 86 binds request fingerprints to the native JSON Schema capability
+SQLite schema 87 binds request fingerprints to the native JSON Schema capability
 and the per-Call prepared response schema and strategy. These semantics also
 change fingerprints for text requests. Schema 84 also admits bounded native
 `WorkflowNodeWaiting` Journal facts and reserved Auxiliary Call identities, plus
@@ -5123,6 +5123,29 @@ Delivery acceptance means the message was durably committed for delivery; it doe
 
 ## Compaction
 
+Asynchronous Summary lifetime belongs to the Session's active runtime. An
+Attempt's ordinary completion or cancellation cannot revoke that operation;
+blocking/manual work retains its native foreground owner. One proactive slot
+includes a retained ready result, with at most one competing foreground operation.
+The worker never installs. Current Safe Boundary, idle-maintenance or mandatory
+recovery authority validates before staging; ordinary late completion cannot
+change a frozen request or transient replay.
+
+Only a complete accepted ChunkPlan can seal source coverage. Comparable roots
+and strict continuous-prefix advancement permit current validation; equal
+coverage retains the active checkpoint, smaller coverage is superseded and
+incomparable coverage is refused. Installation preserves the exact current suffix
+and later appends, reprices the complete primary request and commits through
+current source/owner fences and Head CAS. Operation identity and admission
+generation fence all callbacks and progress. Clone/Fork/import does not transfer
+native installation coverage authority.
+
+Asynchronous generation retains its original Auxiliary deadline, request/EOF
+timeouts and cumulative work allowance, without an added compaction-wide
+deadline or ready-result TTL. Joining/retry/re-entry never renews it. A new
+blocking replacement keeps the separately derived blocking deadline. See
+[asynchronous compaction](asynchronous-compaction.md).
+
 Compaction preserves immutable canonical facts and commits a typed historical
 projection. It materializes Derived summary context with scoped provenance and
 retained Original references, makes a complete inclusion/exclusion decision
@@ -8022,7 +8045,7 @@ invented wire ID. Nullable `wire_id` distinguishes absence from explicit correla
 transmitted stored results use actual accepted native IDs. Stateless/full replay IDs
 match the adapter's relevant wire segment, independent of covered historical occurrences.
 Ambiguous duplicate unresolved wire IDs are rejected before detached wire mutation.
-This required observation change is carried by App Server v50 and Runtime Client v73.
+This required observation change is carried by App Server v50 and Runtime Client v74.
 
 ## PR #477 bounded activation header integrity
 
@@ -8350,7 +8373,7 @@ See [the storage and lifecycle contract](issue-520/README.md).
   document. Graph/node/depth, editor, value, context and decoder safeguards
   remain independent; source admission does not promise arbitrary execution
   payload or model-context capacity.
-- Workflow file data crosses v73 control records through native-owned document
+- Workflow file data crosses v74 control records through native-owned document
   scratch and 65,536-byte chunks. A ready scratch document is neither a partial
   source file nor a source commit. Only the existing revision-fenced source
   transaction publishes the complete canonical file with one atomic replacement.

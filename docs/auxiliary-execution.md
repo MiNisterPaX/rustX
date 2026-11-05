@@ -98,7 +98,8 @@ Real SQLite tests cover transaction atomicity, owner/index consistency, rollback
 Automatic and manual Summary and independent automatic Title use the same Runtime-owned bounded-retry executor.
 Native preparation reserves process total/general, Conversation total/general
 and write responsibility without waiting. Limits are 32/24 and 4/3; only
-native Compaction authority may omit the general reservations. A purpose or
+blocking/manual native Compaction authority may omit the general reservations.
+Session-owned proactive Summary uses ordinary general capacity. A purpose or
 trigger string grants no execution or protected-capacity authority. Both
 capacity and lifecycle-lock Busy refusals arbitrate under cancellation; an
 earlier cancellation remains cancellation, and active callers never wait for
@@ -137,10 +138,18 @@ capacity indefinitely. Live/unproven cleanup retains its old allocation.
 Compaction admits a finite plan of at most 256 normal Summary starts before any
 start. Twelve exceptional recovery actions are shared across re-entry, retries,
 format fallback, carryover degradation and replanning; at most three input
-reductions are permitted. The original absolute deadline is five minutes plus
+reductions are permitted. For blocking/manual work, the original absolute deadline is five minutes plus
 30 seconds per planned start after the first, capped at two hours. Automatic
-Compactions in one logical Agent step share this authority; a manual Compaction
+blocking Compactions in one logical Agent step share this authority; a manual Compaction
 gets an independent allowance. Each checkpoint has its own operation receipt.
+
+Independent asynchronous generation instead retains the existing Auxiliary
+scope deadline from original admission. Planning does not derive another
+compaction-wide deadline, and a fully accepted result awaiting installation has
+no age TTL. Waiting Attempts do not become cancellation parents or renew the
+scope. Native request/EOF timeouts, retries and physical joins remain effective;
+current installation authority is obtained separately after generation closes.
+See [asynchronous compaction](asynchronous-compaction.md).
 
 The model and resources remain frozen. Manual compaction transfers its native
 business tail before the manager lease is released, and a lost observer or

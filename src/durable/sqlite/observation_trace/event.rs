@@ -383,7 +383,7 @@ fn core_data(
             ledger_position: position(connection, message_id)?
                 .ok_or_else(|| storage("native Tool C absent"))?,
         }),
-        E::CompactionStarted { operation_id } => {
+        E::CompactionStarted { operation_id, .. } => {
             alias(
                 fields,
                 event,

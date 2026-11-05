@@ -1087,6 +1087,7 @@ fn compaction_uses_the_next_boundary_even_far_back_in_history() {
                 operation_id: crate::runtime::identity::CompactionOperationId::new(format!(
                     "fixture-compaction-{index}"
                 )),
+                mode: crate::context::operation::CompactionMode::Blocking,
             },
             index * 2,
         );
@@ -3027,6 +3028,7 @@ fn compaction_and_request_only_input_never_become_context_facts() {
             operation_id: crate::runtime::identity::CompactionOperationId::new(
                 "fixture-compaction",
             ),
+            mode: crate::context::operation::CompactionMode::Blocking,
         },
         5,
     );

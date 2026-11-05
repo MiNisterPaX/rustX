@@ -253,6 +253,14 @@ pub struct RuntimeClientCompactionProgress {
     pub generation: Option<crate::context::checkpoint::SummaryGenerationRef>,
 }
 
+/// A bounded operation observation and whether this process still owns the work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeClientCompactionOperation {
+    pub status: crate::context::operation::CompactionOperationStatus,
+    pub live: bool,
+}
+
 /// The context diagnostics carried by the Runtime Client snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -271,6 +279,9 @@ pub struct RuntimeClientContextView {
     /// Latest native measured request or committed compacted-context estimate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occupancy: Option<crate::observation::occupancy::RuntimeClientContextOccupancy>,
+    /// At most two most recently admitted asynchronous compaction operations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compaction_operations: Vec<RuntimeClientCompactionOperation>,
     /// Latest accepted fragment, scoped to the currently active operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction_progress: Option<RuntimeClientCompactionProgress>,

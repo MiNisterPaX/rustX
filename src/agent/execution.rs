@@ -328,6 +328,8 @@ pub(crate) struct AgentExecutionRuntimePolicy {
     /// belongs to a Workflow-owned child. It is consumed before ordinary
     /// Tool Plane preflight and dispatch.
     pub(crate) workflow_output: Option<Arc<dyn crate::runtime::workflow::WorkflowOutputTerminal>>,
+    /// Session-owned asynchronous compaction; it never owns this Attempt.
+    pub(crate) asynchronous: Option<Arc<dyn crate::context::asynchronous::CompactionCoordinator>>,
 }
 
 /// One agent attempt execution.
@@ -339,6 +341,7 @@ pub(crate) struct AgentExecutionRuntimePolicy {
 /// bounded current read model, the retained continuation state, and the
 /// pending `FreshInbound` trigger and attempt-local `PostToolBatch` opportunity.
 pub struct AgentExecution<'a> {
+    asynchronous: Option<Arc<dyn crate::context::asynchronous::CompactionCoordinator>>,
     workspace_changes: Option<Arc<crate::workspace_changes::ChangeRecording>>,
     request: AgentExecutionRequest,
     capability: AttemptCapabilityLease,

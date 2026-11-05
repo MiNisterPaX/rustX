@@ -915,6 +915,14 @@ impl ObservationStore for SqliteConversationStore {
         let connection = self.lock()?;
         observation::latest_events(&connection, through, kinds, attempt, limit)
     }
+    fn latest_compaction_operations(
+        &self,
+        through: u64,
+    ) -> Result<Vec<crate::context::operation::CompactionOperationStatus>, ConversationStoreError>
+    {
+        let connection = self.lock()?;
+        super::super::observation_state::latest_compaction_operations(&connection, through)
+    }
     fn tool_call_occurrence_at(
         &self,
         call_id: &crate::runtime::identity::ToolCallId,

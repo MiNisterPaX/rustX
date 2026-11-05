@@ -562,6 +562,7 @@ fn t08_t14_trace_assistant_compaction_and_lifecycle_heads_use_their_own_kind() {
             operation_id: crate::runtime::identity::CompactionOperationId::new(
                 "inspection-operation",
             ),
+            mode: crate::context::operation::CompactionMode::Blocking,
         },
         5,
     );

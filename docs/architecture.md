@@ -236,7 +236,7 @@ to another owner. The default estimator caches exact model-visible JSON byte
 lengths and rounds the complete aggregate once. Arbitrary estimators retain their
 complete-input contract; additivity is never assumed.
 
-The current SQLite development schema is 86, defined by `SQLITE_SCHEMA_VERSION`. It requires independently durable typed checkpoints, historical activations/head, idempotent compaction receipts, exact request manifests and an explicit owner on every model-request start. Authenticated Source pages use the versioned bounded binary codec; small fact spools have byte/count bounds and spill to disk. Source child indexes retain bounded paths to the existing field Fact instead of duplicating its payload; original bytes and capture witnesses remain unchanged. Version 83 added original Workflow node input/output Journal facts and their data-node kinds; version 84 requires exact Workflow run/instance indexes so terminal and missing-I/O reads do not scan unrelated history. Version 85 adds indexed compaction progress and chunk causality for Summary execution dependencies. Older schemas are refused without migration.
+The current SQLite development schema is 86, defined by `SQLITE_SCHEMA_VERSION`. It requires independently durable typed checkpoints, historical activations/head, idempotent compaction receipts, exact request manifests and an explicit owner on every model-request start. Authenticated Source pages use the versioned bounded binary codec; small fact spools have byte/count bounds and spill to disk. Source child indexes retain bounded paths to the existing field Fact instead of duplicating its payload; original bytes and capture witnesses remain unchanged. Version 83 added original Workflow node input/output Journal facts and their data-node kinds; version 84 requires exact Workflow run/instance indexes so terminal and missing-I/O reads do not scan unrelated history. Version 85 adds Session configuration commit facts and transcript positions. Version 86 adds indexed compaction progress and chunk causality for Summary execution dependencies. Version 87 adds asynchronous compaction operation observations and coverage evidence. Older schemas are refused without migration.
 
 Version 78 adds the `WorkflowNodeWaiting` Journal vocabulary: native node identity,
 wait reason and an optional reserved Auxiliary Call identity. A confirmed append
@@ -2389,7 +2389,14 @@ previous output. Default Summary changes always clear active continuation.
 The default policy derives its threshold and recent target from frozen model
 capacities. Sequential, validated rolling JSON summaries render to deterministic
 Markdown with trusted cumulative file metadata from canonical tool facts.
-Manual, proactive and overflow compaction share one transaction/install pipeline.
+Manual, proactive and overflow compaction share one capture/generate/install pipeline.
+ConversationRuntime supervises one Session-owned proactive operation independently
+of triggering and waiting Attempts. Generation cannot install; the Agent's
+pre-staging consumption cut or serialized idle maintenance obtains current
+authority. Compatible prefix coverage orders competitors, and the Store verifies
+complete source proof, exact retained tail, full current fit and atomic Head CAS.
+See [asynchronous compaction](asynchronous-compaction.md) for the distinct
+Auxiliary/blocking deadline policies and bounded recovery.
 A stable OperationId precedes lifecycle facts; identical candidate replay returns
 the same historical receipt. Head CAS, existing execution fencing and immutable
 dependencies are checked atomically. Cancellation grants and actual-request start
@@ -4896,7 +4903,7 @@ canonical runtime state / internal RuntimeEvent
  RuntimeClientEvent / RuntimeClientSnapshot
                 |
                 v
-       App Server protocol v73
+       App Server protocol v74
 ```
 
 The governing invariant is that all authoritative execution and
@@ -4912,19 +4919,19 @@ JSONL and WebSocket in #36 bind App Server, including its standalone process ent
 point. Neither binding owns domain semantics. The existing `src/protocol` boundary remains the compiled
 `RuntimeManifest` protocol; it is not a frontend protocol.
 
-The current internal envelope is Runtime Client v84. Full Model catalog views
+The current internal envelope is Runtime Client v85. Full Model catalog views
 carry optional Model-owned reasoning Profile order; selection ordinals and frozen
 invocation snapshots are unchanged. It also distinguishes incomplete historical
 Workflow nodes from proven current activity. It retains Workflow
 data-node observation kinds and the removal of speculative cached-Connecting
-source state; App Server v73 records first-submission intent
+source state; App Server v74 records first-submission intent
 before MCP-dependent loading and attachment. Successful adopted-source runtime
 readiness publishes under native admission ownership, independently of authored
 configuration adoption.
 
 The following version history describes the Runtime Client envelope contract.
 Since #428 no process exposes it as a client protocol: `rustx-tui` and the Web
-console speak App Server v73, the only external product control protocol, and
+console speak App Server v74, the only external product control protocol, and
 `src/runtime_client` is the internal projection foundation App Server reuses.
 The envelopes remain the typed request surface of one native host and the wire
 of a running child's read-only live inspection socket. App Server clients never
@@ -7462,7 +7469,7 @@ See [Model contracts and examples](workflow-programs.md#direct-model-nodes-issue
 
 ## Scheduler product projection
 
-App Server v73 provides a bounded, read-only task catalog over the existing
+App Server v74 provides a bounded, read-only task catalog over the existing
 Session catalog and exact-node schedule readers. Keyset traversal, instruction
 search and unavailable-source reporting stay native; the browser does not walk
 Session trees or load runtimes to discover tasks. A coalesced native watch hint
@@ -7553,7 +7560,7 @@ a smaller 512 KiB byte ceiling. Graph, value, presentation and run protections
 remain separate. Counting/bounded serialization stops before oversized encoded
 buffers grow; an expanded-JSON-footprint preflight protects typed YAML allocation.
 
-App Server v73 carries Workflow document references, not inline documents.
+App Server v74 carries Workflow document references, not inline documents.
 Connection-owned anonymous scratch receives/serves 64 KiB chunks and verifies
 length, SHA-256 and the native document before use. Content uses the same
 lossless numeric/unique-field codec; a 32 MiB encoded allowance preserves the

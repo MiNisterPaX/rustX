@@ -489,6 +489,11 @@ pub trait ObservationStore: Send + Sync + 'static {
         attempt: Option<&AttemptId>,
         limit: usize,
     ) -> Result<Vec<crate::durable::observation::ObservationEventHeader>, ConversationStoreError>;
+    /// Latest status for the two most recently admitted operations at this cut.
+    fn latest_compaction_operations(
+        &self,
+        through: u64,
+    ) -> Result<Vec<crate::context::operation::CompactionOperationStatus>, ConversationStoreError>;
     /// Exact committed call occurrence under one native Attempt and frozen read cut.
     fn tool_call_occurrence_at(
         &self,

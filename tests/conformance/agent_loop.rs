@@ -26,6 +26,12 @@
 //! fails: the scenario rejects a request it did not expect, and this driver
 //! rejects a runtime state it did not expect.
 
+#[path = "agent_loop/asynchronous_compaction.rs"]
+mod asynchronous_compaction;
+#[cfg(unix)]
+#[path = "agent_loop/asynchronous_process_death.rs"]
+mod asynchronous_process_death;
+
 use crate::launch_fixture::LaunchFixture;
 use rustx::durable::{CanonicalStore, JournalStore, ObservationStore, ProjectionStore};
 use std::path::PathBuf;
@@ -152,6 +158,8 @@ struct Setup {
     summary_model: Option<String>,
     /// Exercise a smaller native-schema summary model and its thinking profile.
     chunked_compaction: bool,
+    /// Override the Summary window for fixtures requiring a single large call.
+    summary_window: Option<u64>,
     /// Select a separate Anthropic summary model with an explicit profile.
     cross_provider_summary: bool,
     /// Explicit Skill resources for this isolated provider fixture.
@@ -167,6 +175,7 @@ impl Setup {
             context_window: 128_000,
             summary_model: None,
             chunked_compaction: false,
+            summary_window: None,
             cross_provider_summary: false,
             skill_paths: Vec::new(),
         }
@@ -781,7 +790,7 @@ fn models_json(emulator: &ProviderEmulator, setup: &Setup) -> String {
         let mut model = chat_model(id, window);
         model["provider"] = "emulator".into();
         if setup.chunked_compaction && id == SUMMARY_MODEL {
-            model["context_window"] = 16_000.into();
+            model["context_window"] = setup.summary_window.unwrap_or(16_000).into();
             model["max_output_tokens"] = 4_096.into();
             model["capabilities"]["json_schema_output"] = true.into();
             model["default_profile"] = "thinking".into();

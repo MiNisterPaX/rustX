@@ -290,7 +290,11 @@ The [repeated-compaction semantic corpus](../tests/fixtures/compaction-quality/R
 provides an opt-in real-model evaluation rubric. Introducing the fixture does not
 establish semantic quality or mean that a live evaluation was run.
 
-Manual, proactive and overflow recovery share this pipeline. Manual compaction
+Manual, proactive and overflow recovery share this pipeline. Proactive generation
+is Session-scoped and may overlap subsequent turns and Attempts; only current
+Safe Boundary or idle-maintenance authority installs its result. See
+[independent asynchronous compaction](asynchronous-compaction.md) for coverage,
+competition and staged-request isolation. Manual compaction
 creates no Agent Turn, primary request snapshot/start or dynamic-contributor
 invocation. Its summary service call is isolated from primary execution. Successful
 default Summary compaction clears active primary continuation and recompiles the
@@ -666,9 +670,11 @@ provenance and operation receipts. Existing payload and cumulative limits remain
 A finite source plan must be admitted before any Summary start, with at most 256
 planned starts. Twelve exceptional recovery actions are shared across technical
 retries, semantic replanning, fallback, carryover degradation and reductions;
-at most three input reductions are allowed. The absolute deadline starts at the
+at most three input reductions are allowed. For blocking and manual work, the absolute deadline starts at the
 original operation creation and is `min(2 hours, 5 minutes + 30 seconds *
 (planned starts - 1))`. Re-entry cannot expand the plan or renew its budget.
-Automatic compactions in one logical Agent step share the authority; manual
-compaction has its own. Each checkpoint retains a distinct operation receipt.
+Blocking compactions in one logical Agent step share the authority; manual
+compaction has its own. Asynchronous generation keeps its original Auxiliary
+scope deadline, without another plan-derived compaction deadline or result-age
+TTL. Joining and re-entry cannot refresh it. Each checkpoint retains a distinct operation receipt.
 See [auxiliary execution](auxiliary-execution.md).
