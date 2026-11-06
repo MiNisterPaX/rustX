@@ -91,7 +91,7 @@ function isError(record: TraceRecord): boolean {
  */
 function label(tx: Translate, record: TraceRecord): string {
   if (record.kind === 'request') return tx('trajectory:kind.assistant');
-  if (record.kind === 'compaction') return tx('trajectory:kind.compacted');
+  if (record.kind === 'compaction') return tx('trajectory:copy.compaction');
   return tx(`trajectory:kind.${record.kind}`);
 }
 

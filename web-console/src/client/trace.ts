@@ -274,6 +274,7 @@ export function refreshTrace(previous: TraceCache | undefined, page: TracePage, 
       truncated: update.truncated,
       request: record.request && update.request ? { ...record.request, ...update.request } : record.request,
       tool: record.tool && update.tool ? { ...record.tool, ...update.tool } : record.tool,
+      compaction: update.compaction,
     };
   };
   if (previous.located||lifecycleOnly) page = { ...previous.page, records: previous.page.records.map(repair) };
@@ -295,12 +296,20 @@ export function refreshTrace(previous: TraceCache | undefined, page: TracePage, 
   // Keep the original reader while the same native content remains represented.
   // A changed body is refreshed in the background; it never blanks the inspector.
   const unchanged = (id: string) => old.get(id) === latest.get(id) || contentIdentity(old.get(id)) === contentIdentity(latest.get(id));
+  // Compaction inspection owns a growing Call/request collection even when
+  // its visible record and phase are unchanged. Renew only at a later J cut.
+  const newerCompactionCut = (id: string) => {
+    const before = previous.readCuts?.[id] ?? previous.details[id]?.page?.read_cut;
+    const after = readCuts[id];
+    return latest.get(id)?.kind === 'compaction' && before != null && after != null
+      && before.conversation_id === after.conversation_id && BigInt(after.through) > BigInt(before.through);
+  };
   // Workflow collections are opened lazily through the live reader, rather
   // than an independently retained detail page. A freshly advertised native
   // head renews that row's cut even when its node extent is unchanged.
-  for (const id of Object.keys(readCuts)) if (previous.readCuts?.[id] && unchanged(id) && latest.get(id)?.kind !== 'workflow') readCuts[id] = previous.readCuts[id];
+  for (const id of Object.keys(readCuts)) if (previous.readCuts?.[id] && unchanged(id) && latest.get(id)?.kind !== 'workflow' && !newerCompactionCut(id)) readCuts[id] = previous.readCuts[id];
   const details = Object.fromEntries(Object.entries(previous.details).map(([id, entry]) =>
-    [id, unchanged(id) && !(entry.error && old.get(id)?.state !== latest.get(id)?.state)
+    [id, unchanged(id) && !newerCompactionCut(id) && !(entry.error && old.get(id)?.state !== latest.get(id)?.state)
       ? entry : { ...entry, stale: true, error: undefined }],
   ));
   return { ...previous, selection, details, readCuts:retainedCuts(readCuts,records,selection),page: { read_cut:null,records, next_cursor: previous.page.next_cursor } };

@@ -96,7 +96,16 @@ export function systemPresentation(tx: Translate, record: TraceRecord): { label:
 }
 
 export function recordLabel(tx: Translate, record: TraceRecord): string {
-  if (record.kind === 'compaction') return record.state === 'completed' ? tx('trajectory:compacted') : record.state === 'running' ? tx('trajectory:copy.compacting') : tx('trajectory:copy.compaction-value', { p0: traceStateLabel(tx, record.state) });
+  if (record.kind === 'compaction') {
+    switch (record.compaction?.outcome) {
+      case 'committed': return tx('trajectory:compacted');
+      case 'skipped': return tx('trajectory:compaction.skipped');
+      case 'superseded': return tx('trajectory:compaction.superseded');
+      case 'no_effect': return tx('trajectory:compaction.no-effect');
+    }
+    if (record.compaction?.status?.phase === 'ready') return tx('trajectory:compaction.ready');
+    return record.state === 'running' ? tx('trajectory:copy.compacting') : tx('trajectory:copy.compaction-value', { p0: traceStateLabel(tx, record.state) });
+  }
   return tx(`trajectory:kind.${record.kind}`);
 }
 

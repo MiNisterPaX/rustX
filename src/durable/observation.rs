@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub use super::trace::{
     RequestReadSummary, TraceAdoptionClass, TraceAdoptionPage, TraceBootstrapFact,
     TraceCanonicalSummary, TraceFactData, TraceFactHeader, TraceFactKind, TraceFactQuery,
-    TraceFactScope, TraceRequestContextPage, TraceRequestPredecessorHeader, TraceTerminalClass,
+    TraceFactScope, TraceCompactionCallIds, TraceRequestContextPage, TraceRequestPredecessorHeader, TraceTerminalClass,
     TraceTerminalHeader, TraceToolProposalSummary,
 };
 

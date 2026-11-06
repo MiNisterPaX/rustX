@@ -336,9 +336,21 @@ it.each(['en', 'zh'] as const)('T1-08 Calls summary localizes in %s and leaves n
   for (const domain of domains) expect(visible.some(item => item.type === 'RecordRow' && item.record.id === domain.id)).toBe(domain.kind === 'background');
   expect(visible.find((item): item is InspectableDisplayItem => item.type === 'RecordRow' && item.record.id === 'trace:20')?.label).toBe(tx('trajectory:copy.compacting'));
   for (const state of ['incomplete', 'failed', 'completed'] as const) {
-    const item = flattenTrajectory(tx, projectTrajectory(tx, [traceRecord(21, { kind: 'compaction', request: null, state })])).find(item => item.type === 'RecordRow')!;
+    const item = flattenTrajectory(tx, projectTrajectory(tx, [traceRecord(21, { kind: 'compaction', request: null, state,
+      compaction: { mode: 'blocking', status: null, outcome: state === 'completed' ? 'committed' : null } })])).find(item => item.type === 'RecordRow')!;
     expect(item.label).toBe(state === 'completed' ? tx('trajectory:compacted') : tx('trajectory:copy.compaction-value', { p0: traceStateLabel(tx, state) }));
     if (state === 'incomplete') expect(recordText(tx, item.record)).toBe(item.label);
+  }
+});
+
+it.each(['en', 'zh'] as const)('non-committed compaction outcomes do not claim a checkpoint in %s', locale => {
+  const tx = translator(locale);
+  for (const outcome of ['skipped', 'superseded', 'no_effect'] as const) {
+    const record = traceRecord(21, { kind: 'compaction', request: null, state: 'completed',
+      compaction: { mode: 'proactive', status: null, outcome } });
+    const item = flattenTrajectory(tx, projectTrajectory(tx, [record])).find(item => item.type === 'RecordRow')!;
+    expect(item.label).not.toBe(tx('trajectory:compacted'));
+    expect(recordText(tx, record)).toBe(item.label);
   }
 });
 

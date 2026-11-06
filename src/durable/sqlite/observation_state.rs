@@ -170,6 +170,28 @@ pub(super) fn todo_head(
     }
 }
 
+/// Resolve the immutable native admission at a bounded Journal cut.
+pub(super) fn compaction_start_mode(
+    connection: &Connection,
+    operation_id: &crate::runtime::identity::CompactionOperationId,
+    before: u64,
+) -> Result<crate::context::operation::CompactionMode, ConversationStoreError> {
+    let value: Option<Option<String>> = connection
+        .query_row(
+            "SELECT CASE WHEN length(CAST(json_extract(event_json,'$.event.mode') AS BLOB))<=16 THEN json_extract(event_json,'$.event.mode') END FROM events INDEXED BY events_compaction_operation_kind_idx WHERE json_extract(event_json,'$.event.operation_id')=?1 AND json_extract(event_json,'$.event.type')='compaction_started' AND sequence<?2 ORDER BY sequence ASC LIMIT 1",
+            params![operation_id.as_str(), before],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| storage(error.to_string()))?;
+    let mode = value.flatten().ok_or_else(|| {
+        ConversationStoreError::InvalidReference("compaction start mode unavailable".into())
+    })?;
+    serde_json::from_value(serde_json::Value::String(mode)).map_err(|_| {
+        ConversationStoreError::InvalidReference("invalid compaction start mode".into())
+    })
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "Keep the closed event-to-observation mapping together"
@@ -208,6 +230,7 @@ pub(super) fn event(
         {
             let value = crate::runtime_client::snapshot::RuntimeClientCompactionProgress {
                 operation_id: operation_id.clone(),
+                mode: *mode,
                 accepted_fragments: 0,
                 source_ranges: Vec::new(),
                 generation: None,
@@ -233,8 +256,19 @@ pub(super) fn event(
             source_ranges,
             generation,
         } => {
+            let mode = compaction_start_mode(connection, operation_id, event.sequence)?;
+            if mode == crate::context::operation::CompactionMode::Proactive {
+                super::observation_request::index_state(
+                    connection,
+                    "observation_context",
+                    &format!("context/{}", event.sequence),
+                    &serde_json::json!({}),
+                )?;
+                return Ok(());
+            }
             let value = crate::runtime_client::snapshot::RuntimeClientCompactionProgress {
                 operation_id: operation_id.clone(),
+                mode,
                 accepted_fragments: *accepted_fragments,
                 source_ranges: source_ranges.clone(),
                 generation: generation.clone(),

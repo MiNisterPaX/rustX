@@ -121,6 +121,15 @@ fn repair<'a>(
             continue;
         }
         let live = match record.kind {
+            TraceKind::Compaction => snapshot.context.compaction_operations.iter()
+                .find(|current| current.live && record.native_id == Some(current.status.operation_id.as_str()))
+                .and_then(|current| match current.status.phase {
+                    crate::context::operation::CompactionOperationPhase::Generating
+                    | crate::context::operation::CompactionOperationPhase::Retrying => Some(TraceState::Running),
+                    crate::context::operation::CompactionOperationPhase::Ready => Some(TraceState::Pending),
+                    crate::context::operation::CompactionOperationPhase::ForegroundWaiting => Some(TraceState::Waiting),
+                    _ => None,
+                }),
             TraceKind::Background => snapshot
                 .jobs
                 .iter()

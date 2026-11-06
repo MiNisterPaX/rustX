@@ -19,9 +19,9 @@ export function cellKind(item: InspectableDisplayItem): CellKind {
   return item.type === 'WorkflowNode' ? 'workflow_node' : item.type === 'SystemPromptCell' ? 'system' : item.type === 'ContextRow' ? 'context' : isWorkflowCall(item.record) ? 'workflow' : item.record.kind;
 }
 
-/** Harness role labels; a compaction record is shown as its Compacted result. */
+/** Role labels do not claim a Compaction committed. */
 export function cellLabel(tx: Translate, kind: CellKind): string {
-  return kind === 'compaction' ? tx('trajectory:kind.compacted') : tx(`trajectory:kind.${kind}`);
+  return kind === 'compaction' ? tx('trajectory:copy.compaction') : tx(`trajectory:kind.${kind}`);
 }
 
 /** Failure states read as errors, as Harness marks a failed Tool or request. */
@@ -88,6 +88,7 @@ function attachmentSummary(tx: Translate, record: TraceRecord): string {
 }
 
 function compactionText(tx: Translate, record: TraceRecord): string {
+  if (record.compaction?.outcome !== 'committed') return recordLabel(tx, record);
   if (record.state === 'running') return tx('trajectory:layout.compacting');
   if (record.state === 'failed') return tx('trajectory:layout.compaction-failed');
   if (record.state !== 'completed') return recordLabel(tx, record);

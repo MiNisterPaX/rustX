@@ -772,6 +772,7 @@ fn r1_primary_request_usage_survives_reduced_native_witness_and_auxiliary_interl
         let request_started = store
             .commit_auxiliary_request_start(
                 &AuxiliaryRequestStart {
+                    invocation: crate::model::auxiliary::fixture_invocation_identity(),
                     call_id: call_id.clone(),
                     ordinal: 0,
                     request_id: auxiliary_request_id.clone(),
@@ -6911,7 +6912,21 @@ fn background_completion_preserves_unrelated_foreground_progress() {
         None,
         &RuntimeEvent::CompactionStarted {
             operation_id: foreground.clone(),
-            mode: CompactionMode::Manual,
+            mode: CompactionMode::Overflow,
+        },
+    );
+    projection.fold_compaction_event(
+        None,
+        &RuntimeEvent::CompactionChunkAccepted {
+            operation_id: foreground.clone(),
+            accepted_fragments: 1,
+            source_ranges: vec![crate::model::auxiliary::AuxiliarySourceRange {
+                projection_index: 0,
+                role: crate::model::auxiliary::AuxiliarySourceRole::User,
+                byte_start: 0,
+                byte_end: 1,
+            }],
+            generation: None,
         },
     );
     projection.fold_compaction_event(
@@ -6940,5 +6955,13 @@ fn background_completion_preserves_unrelated_foreground_progress() {
             .operation_id,
         foreground
     );
+    let progress = projection
+        .snapshot
+        .context
+        .compaction_progress
+        .as_ref()
+        .unwrap();
+    assert_eq!(progress.mode, CompactionMode::Overflow);
+    assert_eq!(progress.accepted_fragments, 1);
     assert_eq!(projection.snapshot.context.compaction_count, 1);
 }

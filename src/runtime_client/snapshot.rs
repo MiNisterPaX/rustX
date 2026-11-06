@@ -248,6 +248,8 @@ pub struct RuntimeClientSnapshot {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeClientCompactionProgress {
     pub operation_id: crate::runtime::identity::CompactionOperationId,
+    /// The native trigger fixed at operation admission.
+    pub mode: crate::context::operation::CompactionMode,
     pub accepted_fragments: u32,
     pub source_ranges: Vec<crate::model::auxiliary::AuxiliarySourceRange>,
     pub generation: Option<crate::context::checkpoint::SummaryGenerationRef>,

@@ -702,6 +702,7 @@ impl RuntimeClientProjection {
                 self.snapshot.context.compaction_progress =
                     Some(super::super::snapshot::RuntimeClientCompactionProgress {
                         operation_id: operation_id.clone(),
+                        mode: *mode,
                         accepted_fragments: 0,
                         source_ranges: Vec::new(),
                         generation: None,

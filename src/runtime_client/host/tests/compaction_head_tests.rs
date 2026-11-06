@@ -36,19 +36,22 @@ fn cold_read_restores_full_bounded_progress_without_trace_or_completion() {
     };
     append(RuntimeEvent::CompactionStarted {
         operation_id: operation_id.clone(),
-        mode: crate::context::operation::CompactionMode::Blocking,
+        mode: crate::context::operation::CompactionMode::Overflow,
     });
     let started_cut = store.observation_read_cut().unwrap();
     let started = super::super::durable_bootstrap::read(&store, &started_cut).unwrap();
     assert!(!started.context.compaction_in_progress);
+    let started_progress = started.context.compaction_progress.unwrap();
+    assert_eq!(started_progress.accepted_fragments, 0);
     assert_eq!(
-        started
-            .context
-            .compaction_progress
-            .unwrap()
-            .accepted_fragments,
-        0
+        started_progress.mode,
+        crate::context::operation::CompactionMode::Overflow
     );
+    // Another operation's Started fact must never supply this operation's mode.
+    append(RuntimeEvent::CompactionStarted {
+        operation_id: CompactionOperationId::new("unrelated-manual"),
+        mode: crate::context::operation::CompactionMode::Manual,
+    });
     let ranges: Vec<_> = (0..32)
         .map(|projection_index| AuxiliarySourceRange {
             projection_index,
@@ -85,6 +88,7 @@ fn cold_read_restores_full_bounded_progress_without_trace_or_completion() {
     store
         .commit_auxiliary_request_start(
             &AuxiliaryRequestStart {
+                invocation: crate::model::auxiliary::fixture_invocation_identity(),
                 call_id: call_id.clone(),
                 ordinal: 0,
                 request_id: request_id.clone(),
@@ -147,7 +151,26 @@ fn cold_read_restores_full_bounded_progress_without_trace_or_completion() {
     assert!(!cold.context.compaction_in_progress);
     let progress = cold.context.compaction_progress.unwrap();
     assert_eq!(progress.operation_id, operation_id);
+    assert_eq!(
+        progress.mode,
+        crate::context::operation::CompactionMode::Overflow
+    );
     assert_eq!(progress.accepted_fragments, 1);
+    let source = store
+        .observation_state_source("context", &cut)
+        .unwrap()
+        .unwrap();
+    let field = store
+        .observation_state_value_read(
+            "context",
+            &source,
+            &cut,
+            &["compaction_progress".into(), "mode".into()],
+            0,
+            64,
+        )
+        .unwrap();
+    assert_eq!(serde_json::from_slice::<String>(&field.bytes).unwrap(), "overflow");
     assert_eq!(progress.source_ranges, ranges);
     assert_eq!(cold.context.compaction_count, 0);
     append(RuntimeEvent::CompactionCancelled { operation_id });

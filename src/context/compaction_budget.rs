@@ -279,6 +279,7 @@ mod tests {
 
     fn new_request(call_id: AuxiliaryCallId) -> AuxiliaryRequestStart {
         AuxiliaryRequestStart {
+            invocation: crate::model::auxiliary::fixture_invocation_identity(),
             call_id,
             request_id: RequestId::generate_auxiliary(&SystemUuidV7Generator).unwrap(),
             ordinal: 0,

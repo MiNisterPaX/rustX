@@ -221,6 +221,7 @@ fn read_compaction(
                     } if mode != crate::context::operation::CompactionMode::Proactive => Some(
                         crate::runtime_client::snapshot::RuntimeClientCompactionProgress {
                             operation_id,
+                            mode,
                             accepted_fragments: 0,
                             source_ranges: Vec::new(),
                             generation: None,
@@ -231,14 +232,19 @@ fn read_compaction(
                         accepted_fragments,
                         source_ranges,
                         generation,
-                    } => Some(
-                        crate::runtime_client::snapshot::RuntimeClientCompactionProgress {
-                            operation_id,
-                            accepted_fragments,
-                            source_ranges,
-                            generation,
-                        },
-                    ),
+                    } => {
+                        let mode = store
+                            .compaction_start_mode_before(&operation_id, witness.sequence)?;
+                        (mode != crate::context::operation::CompactionMode::Proactive).then_some(
+                            crate::runtime_client::snapshot::RuntimeClientCompactionProgress {
+                                operation_id,
+                                mode,
+                                accepted_fragments,
+                                source_ranges,
+                                generation,
+                            },
+                        )
+                    }
                     crate::events::types::RuntimeEvent::CompactionStarted { .. } => None,
                     _ => {
                         return Err(ConversationStoreError::InvalidReference(

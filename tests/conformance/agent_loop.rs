@@ -817,7 +817,12 @@ fn models_json(emulator: &ProviderEmulator, setup: &Setup) -> String {
                 "precise": {"request_params": "{\"temperature\":0.2}"}
             });
         }
-        models.insert(format!("{provider}/{id}"), model);
+        let reference = if setup.cross_provider_summary && protocol == "anthropic_messages" {
+            "logical-summary-alias".to_owned()
+        } else {
+            format!("{provider}/{id}")
+        };
+        models.insert(reference, model);
     }
     if setup.images {
         for (id, protocol) in [
@@ -1555,6 +1560,7 @@ async fn compaction_invokes_the_real_provider_on_both_summary_policies() {
 /// summary for an `OpenAI` primary request through both real provider adapters.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compaction_uses_an_explicit_cross_provider_summary_profile() {
+    use rustx::durable::AuxiliaryStore;
     use rustx::events::types::RuntimeEvent as E;
     use rustx::model::auxiliary::AuxiliaryInputEvidence;
     use rustx::model::session::AuxiliaryModelView;
@@ -1565,7 +1571,7 @@ async fn compaction_uses_an_explicit_cross_provider_summary_profile() {
     };
     let setup = Setup {
         context_window: COMPACTION_CONTEXT_WINDOW,
-        summary_model: Some(format!("emulator-anthropic/{ANTHROPIC_MODEL}")),
+        summary_model: Some("logical-summary-alias".to_owned()),
         cross_provider_summary: true,
         ..Setup::new(&format!("emulator/{CHAT_MODEL}"))
     };
@@ -1595,7 +1601,7 @@ async fn compaction_uses_an_explicit_cross_provider_summary_profile() {
     };
     assert_eq!(
         summary.model.to_string(),
-        format!("emulator-anthropic/{ANTHROPIC_MODEL}")
+        "logical-summary-alias"
     );
     assert_eq!(
         summary.protocol,
@@ -1638,6 +1644,20 @@ async fn compaction_uses_an_explicit_cross_provider_summary_profile() {
         }
     )));
     assert!(snapshot.context.projection_head.is_some());
+    let summary_call = journal.iter().find_map(|entry| match &entry.event {
+        E::AuxiliaryCallStarted { call_id, input: AuxiliaryInputEvidence::Compaction { .. }, .. } => Some(call_id.clone()),
+        _ => None,
+    }).expect("native Summary Call start");
+    let before_cut = driver.store.auxiliary_audit_cut().unwrap();
+    let before = driver.store.read_auxiliary_call_requests(&summary_call, before_cut, None, 2).unwrap();
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].invocation.provider.as_str(), "emulator-anthropic");
+    assert_eq!(before[0].invocation.model_ref.to_string(), "logical-summary-alias");
+    assert_eq!(before[0].invocation.profile.as_ref().unwrap().as_str(), "precise");
+    assert_eq!(before[0].model, ANTHROPIC_MODEL);
+    driver.model_set(SessionModelConfig::of(ModelRef::parse(&format!("emulator/{SECOND_MODEL}")).unwrap())).await.unwrap();
+    let after = driver.store.read_auxiliary_call_requests(&summary_call, driver.store.auxiliary_audit_cut().unwrap(), None, 2).unwrap();
+    assert_eq!(after, before, "historical request identity is independent of current Session configuration");
     emulator.finish().await;
 }
 

@@ -243,6 +243,7 @@ mod tests {
         store
             .commit_auxiliary_request_start(
                 &AuxiliaryRequestStart {
+                    invocation: crate::model::auxiliary::fixture_invocation_identity(),
                     call_id,
                     ordinal: 0,
                     request_id: request_id.clone(),
@@ -590,6 +591,7 @@ mod tests {
         store
             .commit_auxiliary_request_start(
                 &AuxiliaryRequestStart {
+                    invocation: crate::model::auxiliary::fixture_invocation_identity(),
                     call_id: call_id.clone(),
                     ordinal: 0,
                     request_id: request_id.clone(),
@@ -719,6 +721,7 @@ mod tests {
             journal_sequence: 1,
             fact: AuxiliaryAuditFact::RequestStarted(
                 crate::model::auxiliary::AuxiliaryRequestAudit {
+                    invocation: crate::model::auxiliary::fixture_invocation_identity(),
                     call_id: AuxiliaryCallId::generate(),
                     ordinal: 0,
                     request_id: crate::runtime::identity::RequestId::new("request"),
@@ -754,6 +757,7 @@ mod tests {
             journal_sequence: 1,
             fact: AuxiliaryAuditFact::RequestStarted(
                 crate::model::auxiliary::AuxiliaryRequestAudit {
+                    invocation: crate::model::auxiliary::fixture_invocation_identity(),
                     call_id: AuxiliaryCallId::generate(),
                     ordinal: 0,
                     request_id: crate::runtime::identity::RequestId::new("request"),

@@ -74,6 +74,7 @@ fn request_start(
     request_id: RequestId,
 ) -> AuxiliaryRequestStart {
     AuxiliaryRequestStart {
+        invocation: crate::model::auxiliary::fixture_invocation_identity(),
         call_id,
         ordinal,
         request_id,

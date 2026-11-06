@@ -344,6 +344,7 @@ fn mixed_auxiliary_terminal_never_replaces_primary_occupancy_statistics_or_trace
     let auxiliary_start = store
         .commit_auxiliary_request_start(
             &AuxiliaryRequestStart {
+                invocation: crate::model::auxiliary::fixture_invocation_identity(),
                 call_id: call_id.clone(),
                 ordinal: 0,
                 request_id: request_id.clone(),

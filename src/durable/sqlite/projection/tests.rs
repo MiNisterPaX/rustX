@@ -76,6 +76,7 @@ fn start_auxiliary_call(
         store
             .commit_auxiliary_request_start(
                 &AuxiliaryRequestStart {
+                    invocation: crate::model::auxiliary::fixture_invocation_identity(),
                     call_id: call_id.clone(),
                     ordinal: 0,
                     request_id: request_id.clone(),
@@ -160,6 +161,7 @@ fn start_fragment_call(
     store
         .commit_auxiliary_request_start(
             &AuxiliaryRequestStart {
+                invocation: crate::model::auxiliary::fixture_invocation_identity(),
                 call_id: call_id.clone(),
                 request_id: request_id.clone(),
                 ordinal: 0,
@@ -3121,6 +3123,7 @@ fn rolling_compaction_lineage_survives_fork_and_rejects_invalid_prior_authority(
     source
         .commit_auxiliary_request_start(
             &AuxiliaryRequestStart {
+                invocation: crate::model::auxiliary::fixture_invocation_identity(),
                 call_id: next.clone(),
                 ordinal: 0,
                 request_id: request_id.clone(),
@@ -3600,6 +3603,7 @@ fn inherited_summary_after_retry_retains_each_physical_request_evidence() {
     store
         .commit_auxiliary_request_start(
             &AuxiliaryRequestStart {
+                invocation: crate::model::auxiliary::fixture_invocation_identity(),
                 call_id: call_id.clone(),
                 ordinal: 1,
                 request_id: second.clone(),
