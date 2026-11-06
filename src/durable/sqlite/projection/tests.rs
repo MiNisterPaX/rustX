@@ -3607,7 +3607,7 @@ fn inherited_summary_after_retry_retains_each_physical_request_evidence() {
                 call_id: call_id.clone(),
                 ordinal: 1,
                 request_id: second.clone(),
-                model: "fixture-model".into(),
+                model: "fixture/summary".into(),
             },
             chrono::Utc::now(),
         )

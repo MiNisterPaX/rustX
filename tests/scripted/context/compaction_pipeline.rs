@@ -1513,6 +1513,9 @@ async fn delayed_older_receipt_installs_current_projection_head() {
         .expect("first projection commit probe remains connected");
     let first = store.projection_head().unwrap().unwrap();
     let mut candidate = first.candidate.clone();
+    // This competing Store writer creates an opaque root. Copying O1's
+    // native coverage would falsely claim its private generation witness.
+    candidate.prefix_coverage = None;
     candidate.checkpoint_id = CheckpointId::new("newer-head");
     candidate.expected_head = Some(first.candidate.checkpoint_id.clone());
     candidate.read_cut = store.compaction_resource_cut().unwrap();

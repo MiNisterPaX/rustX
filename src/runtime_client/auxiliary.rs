@@ -579,7 +579,7 @@ mod tests {
         store.initialize(&[]).unwrap();
         let call_id = start_call(&store);
         let request_id = RequestId::new("\u{0001}".repeat(512));
-        let model = "\u{0002}".repeat(512);
+        let model = "\\\"".repeat(256);
         assert_eq!(
             request_id.as_str().len(),
             crate::model::auxiliary::AUXILIARY_REQUEST_ID_BYTES_MAX
