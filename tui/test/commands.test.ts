@@ -1229,6 +1229,7 @@ describe("CommandDispatcher", () => {
         compaction_in_progress: false,
         compaction_count: 1,
         latest_compaction: {
+          operation_id: "manual-compaction-operation-1",
           generation: "1",
           checkpoint_id: "conv_8498648a-66ba-716f-8243-8cf147533e52",
           activation_id: "4",

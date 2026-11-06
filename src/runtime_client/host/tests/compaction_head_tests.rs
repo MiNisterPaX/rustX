@@ -170,7 +170,10 @@ fn cold_read_restores_full_bounded_progress_without_trace_or_completion() {
             64,
         )
         .unwrap();
-    assert_eq!(serde_json::from_slice::<String>(&field.bytes).unwrap(), "overflow");
+    assert_eq!(
+        serde_json::from_slice::<String>(&field.bytes).unwrap(),
+        "overflow"
+    );
     assert_eq!(progress.source_ranges, ranges);
     assert_eq!(cold.context.compaction_count, 0);
     append(RuntimeEvent::CompactionCancelled { operation_id });
@@ -744,5 +747,86 @@ fn cold_status_reads_two_admissions_at_cut_and_never_claims_live_work() {
             status: status("a", 1, 0, Phase::Committed)
         })
         .is_err()
+    );
+}
+
+/// Startup reconciliation precedes the live host binding, so the live seed
+/// must read the repaired native status at the same captured Journal cut.
+#[tokio::test]
+async fn live_bootstrap_keeps_reconciled_background_status_without_claiming_work() {
+    use crate::context::operation::{
+        CompactionMode, CompactionOperationPhase, CompactionOperationStatus,
+    };
+    use crate::events::types::{EVENT_SCHEMA_VERSION, RuntimeEventEnvelope};
+    use crate::runtime::identity::{CompactionOperationId, EventId};
+
+    fn seed_orphan(store: &SqliteConversationStore) {
+        let operation_id = CompactionOperationId::new("recovered-proactive");
+        let status = CompactionOperationStatus {
+            operation_id: operation_id.clone(),
+            admission_generation: 1,
+            triggering_attempt_id: None,
+            waiting_attempt_id: None,
+            phase: CompactionOperationPhase::Generating,
+            accepted_fragments: 0,
+            diagnostic: None,
+        };
+        let envelope = |event| RuntimeEventEnvelope {
+            schema_version: EVENT_SCHEMA_VERSION,
+            event_id: EventId::new(""),
+            sequence: 0,
+            conversation_id: store.conversation_id().clone(),
+            attempt_id: None,
+            turn_id: None,
+            timestamp: chrono::DateTime::UNIX_EPOCH,
+            tool_occurrence: None,
+            observation: None,
+            event,
+        };
+        store
+            .append_compaction_admission(
+                envelope(RuntimeEvent::CompactionStarted {
+                    operation_id,
+                    mode: CompactionMode::Proactive,
+                }),
+                envelope(RuntimeEvent::CompactionOperationUpdated { status }),
+            )
+            .unwrap();
+    }
+
+    let (_, fixture) = host_fixture_before_activation(
+        vec![],
+        ToolRegistry::new(),
+        status_engine(),
+        false,
+        None,
+        Some(seed_orphan),
+    )
+    .await;
+    let checkpoint = fixture.host.checkpoint().unwrap();
+    let operations = &checkpoint.snapshot.context.compaction_operations;
+    assert_eq!(operations.len(), 1);
+    assert_eq!(
+        operations[0].status.operation_id.as_str(),
+        "recovered-proactive"
+    );
+    assert_eq!(
+        operations[0].status.phase,
+        CompactionOperationPhase::NoEffect
+    );
+    assert!(!operations[0].live);
+    assert!(
+        operations[0]
+            .status
+            .diagnostic
+            .as_deref()
+            .is_some_and(|value| value.contains("not resumed"))
+    );
+    let store = fixture.store.as_ref().unwrap();
+    assert_eq!(
+        store
+            .latest_compaction_operations(checkpoint.read_cut.through)
+            .unwrap(),
+        vec![operations[0].status.clone()]
     );
 }

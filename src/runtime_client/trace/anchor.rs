@@ -290,15 +290,7 @@ impl TraceProjection<'_> {
                 vec![K::ToolExecutionCompleted, K::ToolExecutionFailed]
             }
             D::CompactionStart { native_id, mode } => {
-                facts.kind = TraceKind::Compaction;
-                facts.native_id.clone_from(native_id);
-                facts.has_detail = true;
-                facts.compaction = Some(crate::observation::trace::types::TraceCompaction {
-                    mode: *mode,
-                    status: None,
-                    outcome: None,
-                });
-                vec![K::CompactionCompleted, K::CompactionFailed, K::CompactionCancelled, K::CompactionSkipped]
+                compaction_start(facts, native_id.as_deref(), *mode)
             }
             D::BackgroundStart {
                 native_id,
@@ -374,6 +366,26 @@ impl TraceProjection<'_> {
         facts.tool = Some(tool);
         Ok(())
     }
+}
+fn compaction_start(
+    facts: &mut AnchorFacts,
+    native_id: Option<&str>,
+    mode: crate::context::operation::CompactionMode,
+) -> Vec<K> {
+    facts.kind = TraceKind::Compaction;
+    facts.native_id = native_id.map(str::to_owned);
+    facts.has_detail = true;
+    facts.compaction = Some(crate::observation::trace::types::TraceCompaction {
+        mode,
+        status: None,
+        outcome: None,
+    });
+    vec![
+        K::CompactionCompleted,
+        K::CompactionFailed,
+        K::CompactionCancelled,
+        K::CompactionSkipped,
+    ]
 }
 /// A Session-level record between Attempts: its own native position, no
 /// owning Attempt, Step or request.

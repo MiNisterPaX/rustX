@@ -119,7 +119,11 @@ impl ClientInner {
     ) -> Option<Result<super::super::checkpoint::CheckpointPage, RuntimeClientError>> {
         if super::super::trace_observation::compaction_selection(domain).is_some() {
             return Some(super::super::trace_observation::compaction_page(
-                self.store.as_ref(), cut, domain, offset, limit,
+                self.store.as_ref(),
+                cut,
+                domain,
+                offset,
+                limit,
             ));
         }
         if super::super::trace_observation::workflow_selection(domain).is_some() {

@@ -7,30 +7,67 @@ use rustx::model::auxiliary::{
     AuxiliaryBusinessSource, AuxiliaryCallOutcome, AuxiliaryInputEvidence,
 };
 use rustx::model::structured::StructuredOutputStrategy;
-use rustx::runtime::identity::AttemptId;
+use rustx::runtime::identity::{AttemptId, CompactionOperationId};
 
 const NEXT_TURN: &str = "async: cancelled later user tail";
 const FINAL_TURN: &str = "async: fresh final user tail";
 
 /// Observe actual App Server notifications while retaining Driver's cursor fence.
-pub(super) async fn next_status(driver: &Driver, phase: Phase) -> CompactionOperationStatus {
-    if let Some(operation) = driver
-        .snapshot()
-        .expect("current status snapshot")
-        .0
-        .context
-        .compaction_operations
-        .iter()
-        .find(|item| item.status.phase == phase)
-    {
-        return operation.status.clone();
+pub(super) async fn next_status(
+    driver: &Driver,
+    phase: Phase,
+    expected: Option<&CompactionOperationId>,
+) -> CompactionOperationStatus {
+    fn selected(
+        context: &rustx::runtime_client::snapshot::RuntimeClientContextView,
+        phase: Phase,
+        expected: Option<&CompactionOperationId>,
+    ) -> Option<CompactionOperationStatus> {
+        if let Some(operation) = context.compaction_operations.iter().find(|item| {
+            item.status.phase == phase && expected.is_none_or(|id| &item.status.operation_id == id)
+        }) {
+            return Some(operation.status.clone());
+        }
+        if phase == Phase::Ready
+            && let Some(operation) = context
+                .compaction_operations
+                .iter()
+                .rev()
+                .find(|item| expected.is_none_or(|id| &item.status.operation_id == id))
+            && operation.status.phase.is_terminal()
+        {
+            panic!("compaction terminated before Ready: {:?}", operation.status);
+        }
+        None
+    }
+    let snapshot = driver.snapshot().expect("current status snapshot").0;
+    if let Some(status) = selected(&snapshot.context, phase, expected) {
+        return status;
     }
     let mut receiver = driver.events.lock().await;
     loop {
-        let record = tokio::time::timeout(std::time::Duration::from_secs(120), receiver.recv())
-            .await
-            .expect("bounded status notification wait")
-            .expect("notification stream open");
+        let record = match tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            receiver.recv(),
+        )
+        .await
+        {
+            Ok(Some(record)) => record,
+            result => {
+                let projected = driver
+                    .snapshot()
+                    .map(|(snapshot, cursor)| (snapshot.context.compaction_operations, cursor));
+                let durable = driver.store.compaction_resource_cut().and_then(|cut| {
+                    driver
+                        .store
+                        .latest_compaction_operations(cut.journal.0)
+                        .map(|statuses| (cut.journal.0, statuses))
+                });
+                panic!(
+                    "waiting for {phase:?}: notification={result:?}, projected={projected:?}, durable={durable:?}"
+                );
+            }
+        };
         let NotificationMethod::Event { cursor, event, .. } = record else {
             unreachable!()
         };
@@ -43,14 +80,15 @@ pub(super) async fn next_status(driver: &Driver, phase: Phase) -> CompactionOper
             "native notification cursor is contiguous"
         );
         for fact in event.facts() {
-            if let RuntimeClientEvent::ContextCompactionOperationUpdated { context } = fact {
-                if let Some(operation) = context
-                    .compaction_operations
-                    .iter()
-                    .find(|item| item.status.phase == phase)
-                {
-                    return operation.status.clone();
+            let context = match fact {
+                RuntimeClientEvent::ContextCompactionOperationUpdated { context } => context,
+                RuntimeClientEvent::CheckpointAdvanced { checkpoint, .. } => {
+                    &checkpoint.snapshot.context
                 }
+                _ => continue,
+            };
+            if let Some(status) = selected(context, phase, expected) {
+                return status;
             }
         }
     }
@@ -142,7 +180,7 @@ async fn detached_summary_outlives_two_attempts_and_installs_only_after_idle() {
             .contains("chunked-call-001")
     );
     emulator.release_gate("async-summary").await;
-    let ready = next_status(&driver, Phase::Ready).await;
+    let ready = next_status(&driver, Phase::Ready, None).await;
     assert!(
         driver.store.projection_head().unwrap().is_none(),
         "Ready has no installed checkpoint"
@@ -167,13 +205,16 @@ async fn detached_summary_outlives_two_attempts_and_installs_only_after_idle() {
         RuntimeClientEvent::ContextCompactionOperationUpdated { context } => context
             .compaction_operations
             .iter()
-            .find(|item| item.status.phase == Phase::Committed)
+            .find(|item| {
+                item.status.phase == Phase::Committed
+                    && item.status.operation_id == ready.operation_id
+            })
             .map(|item| item.status.clone()),
         _ => None,
     });
     let committed = match committed {
         Some(status) => status,
-        None => next_status(&driver, Phase::Committed).await,
+        None => next_status(&driver, Phase::Committed, Some(&ready.operation_id)).await,
     };
     assert_eq!(committed.operation_id, ready.operation_id);
     assert_eq!(committed.admission_generation, ready.admission_generation);
@@ -301,6 +342,7 @@ async fn detached_summary_outlives_two_attempts_and_installs_only_after_idle() {
     let mut last: Option<(u32, u32)> = None;
     let mut bytes = 0_u64;
     let mut previous = None;
+    let mut observed_usage = Vec::with_capacity(starts.len());
     for (index, call_id) in starts.iter().enumerate() {
         let call = driver
             .store
@@ -313,6 +355,7 @@ async fn detached_summary_outlives_two_attempts_and_installs_only_after_idle() {
             .unwrap();
         assert_eq!(request.len(), 1);
         assert_eq!(request[0].model, SUMMARY_MODEL);
+        observed_usage.push(request[0].usage.clone());
         let AuxiliaryBusinessSource::Compaction { preceding_call, .. } = &call.business_source
         else {
             unreachable!()
@@ -370,5 +413,83 @@ async fn detached_summary_outlives_two_attempts_and_installs_only_after_idle() {
         .expect("native authenticated prefix coverage");
     assert_eq!(bytes, coverage.rendered_bytes);
     assert_eq!(last.unwrap().0 + 1, coverage.captured_prefix_items);
+    let admitted = journal
+        .iter()
+        .find(|entry| {
+            matches!(&entry.event,
+                E::CompactionStarted { operation_id, .. } if operation_id == &ready.operation_id
+            )
+        })
+        .unwrap()
+        .timestamp;
+    let ready_at = journal
+        .iter()
+        .find(|entry| {
+            matches!(&entry.event,
+                E::CompactionOperationUpdated { status }
+                    if status.operation_id == ready.operation_id && status.phase == Phase::Ready
+            )
+        })
+        .unwrap()
+        .timestamp;
+    let installed = journal
+        .iter()
+        .find(|entry| {
+            matches!(&entry.event,
+                E::CompactionCompleted { operation_id, .. } if operation_id == &ready.operation_id
+            )
+        })
+        .unwrap()
+        .timestamp;
+    let next_primary = journal
+        .iter()
+        .find(|entry| {
+            entry.timestamp >= admitted
+                && matches!(
+                    &entry.event,
+                    E::ModelRequestStarted {
+                        owner: rustx::model::ModelRequestOwner::Agent { .. },
+                        ..
+                    }
+                )
+        })
+        .unwrap()
+        .timestamp;
+    let usage_component = |select: fn(&rustx::model::types::ModelUsage) -> Option<u64>| {
+        let known: u128 = observed_usage
+            .iter()
+            .filter_map(|usage| usage.as_ref().and_then(select))
+            .map(u128::from)
+            .sum();
+        let missing = observed_usage
+            .iter()
+            .filter(|usage| usage.as_ref().and_then(select).is_none())
+            .count();
+        serde_json::json!({"known_tokens": (missing < observed_usage.len()).then(|| known.to_string()), "requests_without_measurement": missing})
+    };
+    let occupancy = driver.snapshot().unwrap().0.context.occupancy.map(|value| serde_json::json!({
+        "input_tokens": value.input_tokens.to_string(),
+        "window_tokens": value.context_window_tokens.to_string(),
+        "remaining_window_tokens": value.context_window_tokens.checked_sub(value.input_tokens).map(|tokens| tokens.to_string()),
+        "estimated": value.estimated,
+    }));
+    println!(
+        "RUSTX_529_CONTROLLED_METRICS {}",
+        serde_json::json!({
+            "summary_admission_to_next_primary_start_ms": (next_primary - admitted).num_milliseconds(),
+            "summary_admission_to_ready_ms": (ready_at - admitted).num_milliseconds(),
+            "ready_to_installation_ms": (installed - ready_at).num_milliseconds(),
+            "accepted_fragments": accepted.len(),
+            "physical_requests": starts.len(),
+            "blocking_operations": journal.iter().filter(|entry| matches!(&entry.event,
+                E::CompactionStarted { mode: rustx::context::operation::CompactionMode::Blocking, .. }
+            )).count(),
+            "input_usage": usage_component(|usage| usage.input_tokens),
+            "output_usage": usage_component(|usage| usage.output_tokens),
+            "reasoning_usage": usage_component(|usage| usage.details.as_ref().and_then(|details| details.reasoning_tokens)),
+            "rejected_native_request_usage": observed_usage.first().cloned().flatten(),
+            "latest_primary_occupancy": occupancy,
+        })
+    );
     emulator.finish().await;
 }

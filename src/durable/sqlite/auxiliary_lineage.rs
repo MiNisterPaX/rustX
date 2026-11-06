@@ -40,7 +40,15 @@ struct AuditedSnapshot {
     encoded_bytes: usize,
 }
 
-type RequestRow = (u32, String, String, Option<String>, i64, Option<i64>, Option<String>);
+type RequestRow = (
+    u32,
+    String,
+    String,
+    Option<String>,
+    i64,
+    Option<i64>,
+    Option<String>,
+);
 type AuditRow = (i64, i64, String, Option<String>, Option<i64>);
 type OwnerRow = (
     String,
@@ -441,16 +449,27 @@ fn local_snapshot(
     }
     let mut requests = BTreeMap::new();
     let mut first_binding = None;
-    for (ordinal, request_id, model, invocation_json, request_started, request_terminal, request_terminal_kind) in
-        request_rows
+    for (
+        ordinal,
+        request_id,
+        model,
+        invocation_json,
+        request_started,
+        request_terminal,
+        request_terminal_kind,
+    ) in request_rows
     {
-        let invocation_json = invocation_json.ok_or_else(|| invalid("auxiliary Summary invocation identity exceeds its bound"))?;
-        let invocation: crate::model::auxiliary::AuxiliaryInvocationIdentity = serde_json::from_str(&invocation_json)
-            .map_err(|_| invalid("invalid auxiliary Summary invocation identity"))?;
+        let invocation_json = invocation_json
+            .ok_or_else(|| invalid("auxiliary Summary invocation identity exceeds its bound"))?;
+        let invocation: crate::model::auxiliary::AuxiliaryInvocationIdentity =
+            serde_json::from_str(&invocation_json)
+                .map_err(|_| invalid("invalid auxiliary Summary invocation identity"))?;
         invocation.validate().map_err(invalid)?;
         if let Some((first_model, first_invocation)) = &first_binding {
             if first_model != &model || first_invocation != &invocation {
-                return Err(invalid("auxiliary Summary retry changed its frozen model binding"));
+                return Err(invalid(
+                    "auxiliary Summary retry changed its frozen model binding",
+                ));
             }
         } else {
             first_binding = Some((model.clone(), invocation.clone()));
@@ -1256,10 +1275,16 @@ pub(super) fn validate_snapshot_facts(
     {
         return Err(invalid("inherited Summary request ordinals are not dense"));
     }
-    let first_binding = request_starts.get(&0).map(|request| (&request.model, &request.invocation));
+    let first_binding = request_starts
+        .get(&0)
+        .map(|request| (&request.model, &request.invocation));
     for (ordinal, request) in &request_starts {
-        if first_binding.is_some_and(|(model, invocation)| model != &request.model || invocation != &request.invocation) {
-            return Err(invalid("inherited Summary retry changed its frozen model binding"));
+        if first_binding.is_some_and(|(model, invocation)| {
+            model != &request.model || invocation != &request.invocation
+        }) {
+            return Err(invalid(
+                "inherited Summary retry changed its frozen model binding",
+            ));
         }
         if request.terminal_sequence.is_some() != request_terminals.contains_key(ordinal) {
             return Err(invalid(

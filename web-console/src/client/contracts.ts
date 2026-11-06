@@ -28,8 +28,6 @@ export type InboundControlOutcome =
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'resynchronizing' | 'stale' | 'incompatible' | 'error';
 export type OutlinePagingIntent = { type: 'latest' } | { type: 'page'; offset: number };
 export interface CompactionRequestEvidence {
-  /** Presentation ordering only; never resolves an uncertain request. */
-  baselineCount: number;
   generation: number;
   requestId: string;
   authorityId?: string;

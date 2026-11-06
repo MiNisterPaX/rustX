@@ -123,8 +123,16 @@ fn retries_commit_atomically_preserve_each_request_evidence_and_confirm_exact_re
         .unwrap();
     let mut wrong_binding = first.clone();
     wrong_binding.invocation.provider = crate::model::catalog::ProviderId::new("other-provider");
-    assert!(store.commit_auxiliary_request_start(&wrong_binding, Utc::now()).is_err());
-    assert!(store.confirm_auxiliary_request_start(&wrong_binding).is_err());
+    assert!(
+        store
+            .commit_auxiliary_request_start(&wrong_binding, Utc::now())
+            .is_err()
+    );
+    assert!(
+        store
+            .confirm_auxiliary_request_start(&wrong_binding)
+            .is_err()
+    );
     let (failed, scheduled) = retry(&store, &first);
     let mut invalid = scheduled.clone();
     if let RuntimeEvent::AuxiliaryRetryScheduled { next_ordinal, .. } = &mut invalid.event {
@@ -202,11 +210,20 @@ fn retries_commit_atomically_preserve_each_request_evidence_and_confirm_exact_re
     );
     let second = request(&call, 1);
     let mut rebound = second.clone();
-    rebound.invocation.model_ref = crate::model::catalog::ModelRef::parse("other/logical-model").unwrap();
-    assert!(store.commit_auxiliary_request_start(&rebound, Utc::now()).is_err());
+    rebound.invocation.model_ref =
+        crate::model::catalog::ModelRef::parse("other/logical-model").unwrap();
+    assert!(
+        store
+            .commit_auxiliary_request_start(&rebound, Utc::now())
+            .is_err()
+    );
     let mut wire_rebound = second.clone();
     wire_rebound.model = "other-wire-model".into();
-    assert!(store.commit_auxiliary_request_start(&wire_rebound, Utc::now()).is_err());
+    assert!(
+        store
+            .commit_auxiliary_request_start(&wire_rebound, Utc::now())
+            .is_err()
+    );
     store
         .commit_auxiliary_request_start(&second, Utc::now())
         .unwrap();
@@ -244,11 +261,23 @@ fn retries_commit_atomically_preserve_each_request_evidence_and_confirm_exact_re
             .commit_auxiliary_request_start(&request(&call, 2), Utc::now())
             .is_err()
     );
-    store.lock().unwrap().execute(
-        "UPDATE auxiliary_requests SET invocation_json=?1 WHERE request_id=?2",
-        rusqlite::params![serde_json::to_string(&rebound.invocation).unwrap(), second.request_id.as_str()],
-    ).unwrap();
-    assert!(store.load_auxiliary_request(&second.request_id, cut).is_err(), "a mismatched retry identity cannot be presented as original evidence");
+    store
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE auxiliary_requests SET invocation_json=?1 WHERE request_id=?2",
+            rusqlite::params![
+                serde_json::to_string(&rebound.invocation).unwrap(),
+                second.request_id.as_str()
+            ],
+        )
+        .unwrap();
+    assert!(
+        store
+            .load_auxiliary_request(&second.request_id, cut)
+            .is_err(),
+        "a mismatched retry identity cannot be presented as original evidence"
+    );
 }
 
 #[test]

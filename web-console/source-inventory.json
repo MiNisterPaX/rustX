@@ -988,7 +988,7 @@
           "treatment": "Share semantic between-Turn classification across ledger, Inspector and bilingual search. Preserve compaction/reused-history labels without treating unowned native Agent/Background/Workflow activities as between-Turn material or inventing nearby execution ownership."
         }
       ],
-      "local_sha256": "f9c9f51e80b05b01fddfaae8f18e5147cb1458f9d6388b942e0032e1fdbd638a"
+      "local_sha256": "f503b631cba0e43c1b3fd15fee175f1eed50745d040954feaff5fec7865f7da0"
     },
     {
       "upstream": "packages/client/ui-trajectory/src/client/TrajectoryTimeline.module.css",
@@ -1081,7 +1081,7 @@
         "provider configuration authority"
       ],
       "commit": "ddefc45fbc7f8e46dd73185e68295696d1297887",
-      "local_sha256": "fccc84ad0300b27dafbb08b4cd11c797b1bcd49e484c5a9fab6bee8c03c71d9f",
+      "local_sha256": "bb120a9f0f150a98a96a41b2476145c358a8f7a7d3182b48bd3f8b3c0a252d9c",
       "additional_sources": [
         {
           "upstream": "packages/client/ui-trajectory/src/client/layout.ts",
@@ -1170,7 +1170,7 @@
         "provider configuration authority"
       ],
       "commit": "ddefc45fbc7f8e46dd73185e68295696d1297887",
-      "local_sha256": "a7ceb9e11191acdfcbafbbcfbc4ad25173bfe29116e47f0e6bf08f37284c751d",
+      "local_sha256": "7a74c7035cb2f5921b5f785294c543d56090c1d1607f096dee7aa8a920cf001b",
       "additional_sources": [
         {
           "upstream": "packages/client/ui-trajectory/src/client/timeline.ts",
@@ -3324,7 +3324,7 @@
           "upstream_sha256": "8b0a7e2827df55d62aa456570d5fdc012964f94953edf1fbaa95c20b1842f225"
         }
       ],
-      "local_sha256": "70a11326504ae26d2b9053a7530a1422fa4398c44a642b53578af5c8dae9ced4"
+      "local_sha256": "0f46b72efe21d6cd784d771ff7bb5d1caa854cf0b1925357754a7c1cf9da8f71"
     },
     {
       "upstream": "packages/client/ui-chat/src/client/chat/MessageIconActions.tsx",
@@ -3453,7 +3453,7 @@
           "treatment": "Issue #421 semantic ledger adaptation; exact rustX native ownership replaces Harness runtime relationships."
         }
       ],
-      "local_sha256": "ef7fcbc56edcc4377e7207267172eff4e1d18d5a5ff8824fed98d41a2ab93fe5"
+      "local_sha256": "71e8834839573d31f8633751f5af78961978ae4342dbcb77c0a66002f7c72fe9"
     },
     {
       "commit": "ddefc45fbc7f8e46dd73185e68295696d1297887",
@@ -4126,7 +4126,7 @@
           "treatment": "Selected bilingual wording adapted to rustX presentation semantics; no upstream runtime or plugin machinery."
         }
       ],
-      "local_sha256": "1e131ba079bbb2e540c5d70f0bbd3216af1d107a920979f5bbabc66755c87667"
+      "local_sha256": "ac82e60c805db1c0f82df8c27bc4cdf6b39d1254a1f1c4a8bec5113aa3839e0a"
     },
     {
       "upstream": "packages/client/ui-workspace/src/client/locales.ts",

@@ -1,17 +1,22 @@
 //! Session-owned, bounded proactive Summary supervision.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use futures_util::future::BoxFuture;
 
-use super::*;
+use super::{
+    AgentCancellation, AttemptId, CancellationReason, ConversationId, ConversationRuntime,
+    CurrentManualCompaction, DurableOperation, RuntimeEvent, RuntimeInner, WakeGate,
+    render_effective_system_prompt,
+};
 use crate::context::asynchronous::{
     CompactionAdmission, CompactionCoordinator, CompactionDelivery, CompactionDisposition,
     ReadyCompaction,
 };
 use crate::context::compaction::{
-    CapturedCompaction, CompactionExecutionError, GeneratedCompaction,
+    ActivationOutcome, CapturedCompaction, CompactionExecutionError, GeneratedCompaction,
 };
 use crate::context::operation::{CompactionOperationPhase, CompactionOperationStatus};
 use crate::context::{ContextError, ContextErrorKind};
@@ -42,6 +47,9 @@ struct ReadyPublicationGate {
     release: std::sync::mpsc::Receiver<()>,
 }
 
+// Publication, supersession, cancellation and retry are independent facts;
+// Phase alone cannot represent their concurrent combinations.
+#[allow(clippy::struct_excessive_bools)]
 struct WorkState {
     status: CompactionOperationStatus,
     published: Option<CompactionOperationStatus>,
@@ -226,6 +234,49 @@ impl RuntimeInner {
             .cloned()
     }
 
+    /// The capture owner has settled without transferring a worker. A named
+    /// attempt may retire only its own capture; drain calls this without an ID
+    /// after all foreground owners have returned.
+    pub(super) fn settle_abandoned_async_capture(self: &Arc<Self>, trigger: Option<&AttemptId>) {
+        let work = self
+            .async_compaction
+            .lock()
+            .expect("asynchronous compaction registry")
+            .as_ref()
+            .and_then(|registry| registry.proactive.clone());
+        let Some(work) = work else { return };
+        let abandoned = {
+            let mut state = work.state.lock().expect("asynchronous compaction state");
+            if !matches!(state.phase, Phase::Capturing)
+                || trigger.is_some_and(|id| state.status.triggering_attempt_id.as_ref() != Some(id))
+            {
+                false
+            } else {
+                state.phase = Phase::Terminal;
+                state.status.phase = CompactionOperationPhase::Cancelled;
+                state.status.waiting_attempt_id = None;
+                state.status.diagnostic = None;
+                true
+            }
+        };
+        if !abandoned {
+            return;
+        }
+        // The phase transition fences a late start before cancellation takes
+        // its independent gate. There can be no physical worker in Capturing.
+        work.admission.cancellation.cancel();
+        if let Err(error) = self.publish_async_status(&work) {
+            self.fail_async_durability(&error);
+        }
+        work.joined.store(true, Ordering::Release);
+        work.lifecycle
+            .lock()
+            .expect("asynchronous lifecycle")
+            .take();
+        work.changed.notify_waiters();
+        self.wake.notify.notify_one();
+    }
+
     fn publish_async_status(&self, work: &Work) -> Result<(), ContextError> {
         let _publication = work
             .publication
@@ -353,11 +404,9 @@ impl RuntimeInner {
                 (false, false)
             }
         });
-        if publish {
-            if let Err(error) = self.publish_async_status(&work) {
-                self.fail_async_durability(&error);
-                return Err(error);
-            }
+        if publish && let Err(error) = self.publish_async_status(&work) {
+            self.fail_async_durability(&error);
+            return Err(error);
         }
         work.changed.notify_waiters();
         if accepted {
@@ -379,10 +428,8 @@ impl RuntimeInner {
             let mut state = work.state.lock().expect("asynchronous compaction state");
             std::mem::take(&mut state.pending_terminal_publication)
         };
-        if publish_terminal {
-            if let Err(error) = self.publish_async_status(&work) {
-                self.fail_async_durability(&error);
-            }
+        if publish_terminal && let Err(error) = self.publish_async_status(&work) {
+            self.fail_async_durability(&error);
         }
         if !wait
             && !work.exit_announced.load(Ordering::Acquire)
@@ -411,6 +458,19 @@ impl RuntimeInner {
                 .lock()
                 .expect("asynchronous lifecycle")
                 .take();
+            work.changed.notify_waiters();
+        } else if wait {
+            // Another reaper or the capture owner may already be completing
+            // this exact work. Cancellation alone does not prove its exit.
+            loop {
+                let changed = work.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if work.joined.load(Ordering::Acquire) {
+                    break;
+                }
+                changed.await;
+            }
         }
         let terminal = matches!(
             work.state
@@ -437,6 +497,7 @@ impl RuntimeInner {
 
     /// An idle coordinator is a current installation owner. The maintenance
     /// slot serializes this finite check with a new Attempt or manual command.
+    #[allow(clippy::too_many_lines)] // The checked-out conversation and every installation settlement share one boundary.
     pub(super) async fn install_ready_async_when_idle(self: &Arc<Self>) {
         let coordinator = RuntimeCompactionCoordinator(Arc::downgrade(self));
         let (ready, mut conversation, mut context, mut request) = {
@@ -480,9 +541,9 @@ impl RuntimeInner {
                     crate::model::types::PromptFallbackAuthorization::default(),
                 response_schema: None,
                 response_byte_limit: None,
-                images: Default::default(),
+                images: BTreeMap::default(),
                 invocation: model.primary().invocation_config(),
-                messages: Default::default(),
+                messages: crate::model::SelectedModelInput::default(),
                 tools: resources.capability().tool_registry().model_definitions(),
                 effective_system_prompt: render_effective_system_prompt(&sections),
                 continuation: None,
@@ -551,7 +612,6 @@ impl RuntimeInner {
             state.conversation = Some(conversation);
             state.manual_compaction = None;
         }
-        use crate::context::compaction::ActivationOutcome;
         let disposition = match result {
             Ok(ActivationOutcome::Committed(completed)) => {
                 if completed.newly_committed {
@@ -751,6 +811,7 @@ impl CompactionCoordinator for RuntimeCompactionCoordinator {
         Ok(Some(admission))
     }
 
+    #[allow(clippy::too_many_lines)] // One owned worker contains generation, observation and terminal settlement.
     fn start(
         &self,
         admission: CompactionAdmission,
@@ -766,17 +827,30 @@ impl CompactionCoordinator for RuntimeCompactionCoordinator {
         let work = inner.async_work(&admission).ok_or_else(|| {
             ContextError::new(ContextErrorKind::Cancelled, "compaction no longer exists")
         })?;
-        {
+        let retired_originals = captured
+            .source_history()
+            .messages
+            .iter()
+            .take(captured.retired_count())
+            .filter_map(|message| message.canonical_id().cloned())
+            .collect();
+        let planned_coverage = PlannedCoverage::from_capture(&captured);
+        let started = admission.cancellation.with_active(|| {
             let mut state = work.state.lock().expect("asynchronous compaction state");
-            state.retired_originals = captured
-                .source_history()
-                .messages
-                .iter()
-                .take(captured.retired_count())
-                .filter_map(|message| message.canonical_id().cloned())
-                .collect();
-            state.planned_coverage = PlannedCoverage::from_capture(&captured);
+            if !inner.lifecycle.is_running() || !matches!(state.phase, Phase::Capturing) {
+                return false;
+            }
+            state.retired_originals = retired_originals;
+            state.planned_coverage = planned_coverage;
             state.phase = Phase::Generating;
+            true
+        });
+        if started != Some(true) {
+            return Err(ContextError::new(
+                ContextErrorKind::Cancelled,
+                "compaction capture is no longer eligible to start",
+            )
+            .into());
         }
         // A foreground writer may have committed while capture was running.
         // Recheck after the planned source coordinate is available and before
@@ -901,9 +975,9 @@ impl CompactionCoordinator for RuntimeCompactionCoordinator {
                         };
                         state.status.diagnostic = (state.status.phase == CompactionOperationPhase::Failed)
                             .then(|| context.message.chars().take(256).collect());
-                        state.phase = if state.status.phase != CompactionOperationPhase::Failed {
-                            Phase::Terminal
-                        } else { Phase::Failed(context) };
+                        state.phase = if state.status.phase == CompactionOperationPhase::Failed {
+                            Phase::Failed(context)
+                        } else { Phase::Terminal };
                     }
                 }
             }
@@ -959,6 +1033,7 @@ impl CompactionCoordinator for RuntimeCompactionCoordinator {
             .lock()
             .expect("asynchronous lifecycle")
             .take();
+        work.changed.notify_waiters();
         if let Err(error) = inner.publish_async_status(&work) {
             inner.fail_async_durability(&error);
             return Err(error);
@@ -1109,11 +1184,9 @@ impl CompactionCoordinator for RuntimeCompactionCoordinator {
                     false
                 }
             };
-            if publish_wait {
-                if let Err(error) = inner.publish_async_status(&work) {
-                    inner.fail_async_durability(&error);
-                    return None;
-                }
+            if publish_wait && let Err(error) = inner.publish_async_status(&work) {
+                inner.fail_async_durability(&error);
+                return None;
             }
             let _waiter = WaitingAttempt {
                 owner: Arc::downgrade(&inner),

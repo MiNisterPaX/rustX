@@ -1,7 +1,7 @@
 //! Real process death while an independently owned Summary is generating or Ready.
 //!
 //! The parent owns the provider and temporary workspace. A re-executed
-//! conformance binary owns the real SessionRuntimeManager and App Server;
+//! conformance binary owns the real `SessionRuntimeManager` and App Server;
 //! the provider's gates and native Ready notification are the only barriers.
 
 use super::*;
@@ -13,11 +13,13 @@ use rustx::model::auxiliary::{
 };
 use rustx::runtime::identity::{CompactionOperationId, ConversationId};
 use serde::Deserialize;
+use std::collections::VecDeque;
+use std::future::Future;
 use std::io::Write as _;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader, Lines};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 
 const SCENARIO: &str = "asynchronous_compaction_crash";
 const CHILD_TEST: &str = "agent_loop::asynchronous_process_death::crash_child";
@@ -25,6 +27,7 @@ const CASE_ENV: &str = "RUSTX_529_CRASH_CASE";
 const ROOT_ENV: &str = "RUSTX_529_CRASH_ROOT";
 const PORT_ENV: &str = "RUSTX_529_CRASH_PROVIDER_PORT";
 const INFO_MARKER: &str = "RUSTX_529_CHILD_INFO ";
+const CAPTURE_MARKER: &str = "RUSTX_529_CHILD_CAPTURE ";
 const READY_MARKER: &str = "RUSTX_529_CHILD_READY ";
 const TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -75,15 +78,161 @@ async fn crash_child() {
     );
     std::io::stdout().flush().unwrap();
     driver.submit(CHUNKED_PROMPT);
+    let mut commands = BufReader::new(tokio::io::stdin());
+    let mut command = String::new();
+    commands.read_line(&mut command).await.unwrap();
+    assert_eq!(command, "capture\n");
+    let cut = driver.store.compaction_resource_cut().unwrap();
+    let statuses = driver
+        .store
+        .latest_compaction_operations(cut.journal.0)
+        .unwrap();
+    let matching: Vec<_> = statuses
+        .iter()
+        .filter(|status| {
+            let calls = auxiliary_state(&driver.store, &status.operation_id);
+            calls.len() == 1
+                && calls[0].0.outcome.is_none()
+                && calls[0].1.len() == 1
+                && calls[0].1[0].terminal_sequence.is_none()
+        })
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "first gated Summary must identify one live native operation: {statuses:?}"
+    );
+    let captured = (*matching[0]).clone();
+    assert_eq!(captured.phase, CompactionOperationPhase::Generating);
+    println!(
+        "{CAPTURE_MARKER}{}",
+        serde_json::to_string(&captured).unwrap()
+    );
+    std::io::stdout().flush().unwrap();
     if case == "ready" {
-        let ready =
-            super::asynchronous_compaction::next_status(&driver, CompactionOperationPhase::Ready)
-                .await;
+        // Begin the readiness wait only after the parent has observed both
+        // real provider gates and released the Summary response.
+        command.clear();
+        commands.read_line(&mut command).await.unwrap();
+        assert_eq!(command, "await-ready\n");
+        let ready = super::asynchronous_compaction::next_status(
+            &driver,
+            CompactionOperationPhase::Ready,
+            Some(&captured.operation_id),
+        )
+        .await;
+        let snapshot = driver.snapshot().expect("live Ready snapshot").0;
+        assert!(
+            snapshot
+                .attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.phase == RuntimeClientAttemptPhase::Running),
+            "the primary Attempt must still be running at the Ready barrier"
+        );
         println!("{READY_MARKER}{}", serde_json::to_string(&ready).unwrap());
         std::io::stdout().flush().unwrap();
     }
     // Parent SIGKILL, never a graceful runtime drop, is the tested transition.
     std::future::pending::<()>().await;
+}
+
+fn crash_timeline(info: &ChildInfo) -> Vec<String> {
+    use rustx::events::types::RuntimeEvent as E;
+    let Ok(store) =
+        SqliteConversationStore::open_existing(info.conversation_id.clone(), &info.database)
+    else {
+        return vec!["native journal unavailable".into()];
+    };
+    let mut cursor = None;
+    let mut selected = VecDeque::new();
+    for _ in 0..128 {
+        let Ok(page) = store.read_events(cursor, 128) else {
+            break;
+        };
+        if page.events.is_empty() {
+            break;
+        }
+        cursor = page.next_sequence;
+        for envelope in page.events {
+            let detail = match envelope.event {
+                E::ModelRequestStarted {
+                    owner: rustx::model::ModelRequestOwner::Agent { .. },
+                    request_id,
+                    ..
+                } => Some(format!("primary started {request_id}")),
+                E::ModelRequestFailed {
+                    owner: rustx::model::ModelRequestOwner::Agent { .. },
+                    request_id,
+                    error,
+                    ..
+                } => Some(format!("primary failed {request_id}: {error:?}")),
+                E::CompactionOperationUpdated { status } => Some(format!(
+                    "compaction {:?}: {:?}",
+                    status.operation_id, status.phase
+                )),
+                E::AttemptFailed { attempt_id, error } => {
+                    Some(format!("attempt failed {attempt_id}: {error:?}"))
+                }
+                _ => None,
+            };
+            if let Some(detail) = detail {
+                if selected.len() == 24 {
+                    selected.pop_front();
+                }
+                selected.push_back(format!(
+                    "{} J={} {detail}",
+                    envelope.timestamp, envelope.sequence
+                ));
+            }
+        }
+    }
+    selected.into_iter().collect()
+}
+
+async fn while_primary_connected<T>(
+    emulator: &ProviderEmulator,
+    primary_index: u64,
+    info: &ChildInfo,
+    barrier: &str,
+    future: impl Future<Output = T>,
+) -> T {
+    let disconnected = async {
+        let mut diagnosed = false;
+        loop {
+            let url = format!(
+                "{}/__control/observations/await?kind=client_disconnected&requestIndex={primary_index}&timeoutMs=120000",
+                emulator.base_url()
+            );
+            let response = reqwest::get(url).await.expect("primary disconnect watch");
+            if response.status() == reqwest::StatusCode::GATEWAY_TIMEOUT {
+                // No disconnect is the expected state. The enclosing semantic
+                // barrier, rather than one bounded observation read, owns expiry.
+                if !diagnosed {
+                    eprintln!(
+                        "primary remains connected while awaiting {barrier}; native timeline: {:?}",
+                        crash_timeline(info)
+                    );
+                    diagnosed = true;
+                }
+                continue;
+            }
+            assert!(
+                response.status().is_success(),
+                "primary disconnect watch failed"
+            );
+            break response
+                .json::<serde_json::Value>()
+                .await
+                .expect("disconnect JSON");
+        }
+    };
+    tokio::select! {
+        biased;
+        disconnected = disconnected => {
+            panic!("primary disconnected before {barrier}: {disconnected}; native timeline: {:?}", crash_timeline(info));
+        }
+        value = future => value,
+    }
 }
 
 struct ProcessOwner {
@@ -117,14 +266,17 @@ impl Drop for ProcessOwner {
 async fn marker(
     lines: &mut Lines<BufReader<tokio::process::ChildStdout>>,
     prefix: &str,
+    emulator: &ProviderEmulator,
 ) -> serde_json::Value {
     tokio::time::timeout(TIMEOUT, async {
         loop {
-            let line = lines
-                .next_line()
-                .await
-                .expect("read child stdout")
-                .expect("child remained alive until its barrier");
+            let Some(line) = lines.next_line().await.expect("read child stdout") else {
+                let state = match reqwest::get(format!("{}/__control/state", emulator.base_url())).await {
+                    Ok(response) => response.json::<serde_json::Value>().await.ok(),
+                    Err(_) => None,
+                };
+                panic!("child exited before {prefix}; provider state={state:?}; provider diagnostics={}", emulator.diagnostics());
+            };
             if let Some((_, value)) = line.split_once(prefix) {
                 return serde_json::from_str(value).expect("child barrier JSON");
             }
@@ -286,7 +438,7 @@ async fn proactive_generation_and_ready_reconcile_after_real_process_death() {
             .env(CASE_ENV, case)
             .env(ROOT_ENV, root.path())
             .env(PORT_ENV, port.to_string())
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
@@ -296,6 +448,7 @@ async fn proactive_generation_and_ready_reconcile_after_real_process_death() {
             .expect("spawn the isolated conformance child");
         let group = nix::unistd::Pid::from_raw(i32::try_from(child.id().unwrap()).unwrap());
         let stdout = child.stdout.take().expect("child barrier stream");
+        let mut stdin = child.stdin.take().expect("child barrier input");
         let mut owner = ProcessOwner {
             child,
             group,
@@ -303,7 +456,7 @@ async fn proactive_generation_and_ready_reconcile_after_real_process_death() {
         };
         let mut lines = BufReader::new(stdout).lines();
         let info: ChildInfo =
-            serde_json::from_value(marker(&mut lines, INFO_MARKER).await).unwrap();
+            serde_json::from_value(marker(&mut lines, INFO_MARKER, &emulator).await).unwrap();
         assert!(info.root.starts_with(root.path()));
         let (summary_gate, primary_gate) = tokio::join!(
             emulator.await_gate("crash-summary"),
@@ -311,13 +464,51 @@ async fn proactive_generation_and_ready_reconcile_after_real_process_death() {
         );
         let summary_index = summary_gate["requestIndex"].as_u64().unwrap();
         let primary_index = primary_gate["requestIndex"].as_u64().unwrap();
+        stdin
+            .write_all(b"capture\n")
+            .await
+            .expect("request native operation identity");
+        let captured: CompactionOperationStatus = serde_json::from_value(
+            while_primary_connected(
+                &emulator,
+                primary_index,
+                &info,
+                "native capture",
+                marker(&mut lines, CAPTURE_MARKER, &emulator),
+            )
+            .await,
+        )
+        .unwrap();
+        assert_eq!(captured.phase, CompactionOperationPhase::Generating);
         if case == "ready" {
             emulator.release_gate("crash-summary").await;
-            let ready: CompactionOperationStatus =
-                serde_json::from_value(marker(&mut lines, READY_MARKER).await).unwrap();
+            stdin
+                .write_all(b"await-ready\n")
+                .await
+                .expect("release child Ready wait");
+            let ready: CompactionOperationStatus = serde_json::from_value(
+                while_primary_connected(
+                    &emulator,
+                    primary_index,
+                    &info,
+                    "Ready",
+                    marker(&mut lines, READY_MARKER, &emulator),
+                )
+                .await,
+            )
+            .unwrap();
             assert_eq!(ready.phase, CompactionOperationPhase::Ready);
+            assert_eq!(ready.operation_id, captured.operation_id);
+            assert_eq!(ready.admission_generation, captured.admission_generation);
         }
-        let provider_before = emulator.requests().await;
+        let provider_before = while_primary_connected(
+            &emulator,
+            primary_index,
+            &info,
+            "SIGKILL",
+            emulator.requests(),
+        )
+        .await;
         owner.kill().await;
         let primary_disconnect = observation(&emulator, "client_disconnected", primary_index).await;
         assert_eq!(primary_disconnect["requestIndex"], primary_index);
@@ -349,6 +540,8 @@ async fn proactive_generation_and_ready_reconcile_after_real_process_death() {
             .unwrap()
             .pop()
             .expect("persisted background status");
+        assert_eq!(before.operation_id, captured.operation_id);
+        assert_eq!(before.admission_generation, captured.admission_generation);
         assert_eq!(
             before.phase,
             if case == "ready" {
@@ -408,7 +601,14 @@ async fn proactive_generation_and_ready_reconcile_after_real_process_death() {
             .compaction_operations
             .iter()
             .find(|value| value.status.operation_id == before.operation_id)
-            .expect("reconciled operation");
+            .unwrap_or_else(|| {
+                panic!(
+                    "{case}: reconciled operation {:?} absent at checkpoint J={}; observed {:?}",
+                    before.operation_id,
+                    checkpoint.read_cut.through,
+                    checkpoint.snapshot.context.compaction_operations
+                )
+            });
         assert_eq!(operation.status.phase, CompactionOperationPhase::NoEffect);
         assert!(!operation.live);
         assert_eq!(

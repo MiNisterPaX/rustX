@@ -121,15 +121,7 @@ fn repair<'a>(
             continue;
         }
         let live = match record.kind {
-            TraceKind::Compaction => snapshot.context.compaction_operations.iter()
-                .find(|current| current.live && record.native_id == Some(current.status.operation_id.as_str()))
-                .and_then(|current| match current.status.phase {
-                    crate::context::operation::CompactionOperationPhase::Generating
-                    | crate::context::operation::CompactionOperationPhase::Retrying => Some(TraceState::Running),
-                    crate::context::operation::CompactionOperationPhase::Ready => Some(TraceState::Pending),
-                    crate::context::operation::CompactionOperationPhase::ForegroundWaiting => Some(TraceState::Waiting),
-                    _ => None,
-                }),
+            TraceKind::Compaction => live_compaction(record.native_id, snapshot),
             TraceKind::Background => snapshot
                 .jobs
                 .iter()
@@ -221,6 +213,24 @@ fn repair<'a>(
             _ => {}
         }
     }
+}
+
+fn live_compaction(
+    native_id: Option<&str>,
+    snapshot: &crate::runtime_client::snapshot::RuntimeClientSnapshot,
+) -> Option<TraceState> {
+    use crate::context::operation::CompactionOperationPhase as Phase;
+    snapshot
+        .context
+        .compaction_operations
+        .iter()
+        .find(|current| current.live && native_id == Some(current.status.operation_id.as_str()))
+        .and_then(|current| match current.status.phase {
+            Phase::Generating | Phase::Retrying => Some(TraceState::Running),
+            Phase::Ready => Some(TraceState::Pending),
+            Phase::ForegroundWaiting => Some(TraceState::Waiting),
+            _ => None,
+        })
 }
 
 /// A child Trace uses only child activity identities, never the parent's snapshot.

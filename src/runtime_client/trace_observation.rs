@@ -6,7 +6,9 @@ use crate::observation::cut::{CheckpointPageItem, CheckpointReadCut};
 use base64::Engine as _;
 mod inspection;
 mod workflow;
-pub(crate) use inspection::{canonical_selection, compaction_page, compaction_selection, messages_page, messages_selection};
+pub(crate) use inspection::{
+    canonical_selection, compaction_page, compaction_selection, messages_page, messages_selection,
+};
 pub(crate) use workflow::{workflow_page, workflow_selection};
 
 pub(crate) fn context_selection(domain: &str) -> Option<u64> {

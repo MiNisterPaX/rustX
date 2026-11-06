@@ -27,25 +27,72 @@ pub(super) fn compaction_call_ids(
     after: Option<u64>,
     limit: usize,
 ) -> Result<crate::durable::observation::TraceCompactionCallIds, ConversationStoreError> {
-    if limit == 0 || limit > 32 || after.is_some_and(|value| value == 0 || value > cut.read.journal) {
-        return Err(ConversationStoreError::InvalidReference("invalid Compaction Call page".into()));
-    }
     const PREDICATE: &str = "json_extract(event_json,'$.event.business_source.operation_id')=?1 AND json_extract(event_json,'$.event.type')='auxiliary_call_started'";
-    if let Some(after) = after {
-        let sql = format!("SELECT EXISTS(SELECT 1 FROM events INDEXED BY events_auxiliary_compaction_kind_idx WHERE {PREDICATE} AND sequence=?2 AND sequence<=?3)");
-        let valid: bool = connection.query_row(&sql, params![operation.as_str(), after, cut.read.journal], |row| row.get(0)).map_err(|error| storage(error.to_string()))?;
-        if !valid { return Err(ConversationStoreError::InvalidReference("foreign Compaction Call cursor".into())); }
+    if limit == 0 || limit > 32 || after.is_some_and(|value| value == 0 || value > cut.read.journal)
+    {
+        return Err(ConversationStoreError::InvalidReference(
+            "invalid Compaction Call page".into(),
+        ));
     }
-    let sql = format!("SELECT count(*) FROM (SELECT sequence FROM events INDEXED BY events_auxiliary_compaction_kind_idx WHERE {PREDICATE} AND sequence<=?2 LIMIT 1025)");
-    let total: u64 = connection.query_row(&sql, params![operation.as_str(), cut.read.journal], |row| row.get(0)).map_err(|error| storage(error.to_string()))?;
-    if total > 1024 { return Err(ConversationStoreError::ObservationCapacityExceeded); }
-    let sql = format!("SELECT sequence, json_extract(event_json,'$.event.call_id') FROM events INDEXED BY events_auxiliary_compaction_kind_idx WHERE {PREDICATE} AND sequence>?2 AND sequence<=?3 ORDER BY sequence LIMIT ?4");
-    let mut statement = connection.prepare_cached(&sql).map_err(|error| storage(error.to_string()))?;
-    let rows = statement.query_map(params![operation.as_str(), after.unwrap_or(0), cut.read.journal, i64::try_from(limit + 1).expect("bounded page limit")], |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?))).map_err(|error| storage(error.to_string()))?.collect::<Result<Vec<_>, _>>().map_err(|error| storage(error.to_string()))?;
+    if let Some(after) = after {
+        let sql = format!(
+            "SELECT EXISTS(SELECT 1 FROM events INDEXED BY events_auxiliary_compaction_kind_idx WHERE {PREDICATE} AND sequence=?2 AND sequence<=?3)"
+        );
+        let valid: bool = connection
+            .query_row(
+                &sql,
+                params![operation.as_str(), after, cut.read.journal],
+                |row| row.get(0),
+            )
+            .map_err(|error| storage(error.to_string()))?;
+        if !valid {
+            return Err(ConversationStoreError::InvalidReference(
+                "foreign Compaction Call cursor".into(),
+            ));
+        }
+    }
+    let sql = format!(
+        "SELECT count(*) FROM (SELECT sequence FROM events INDEXED BY events_auxiliary_compaction_kind_idx WHERE {PREDICATE} AND sequence<=?2 LIMIT 1025)"
+    );
+    let total: u64 = connection
+        .query_row(&sql, params![operation.as_str(), cut.read.journal], |row| {
+            row.get(0)
+        })
+        .map_err(|error| storage(error.to_string()))?;
+    if total > 1024 {
+        return Err(ConversationStoreError::ObservationCapacityExceeded);
+    }
+    let sql = format!(
+        "SELECT sequence, json_extract(event_json,'$.event.call_id') FROM events INDEXED BY events_auxiliary_compaction_kind_idx WHERE {PREDICATE} AND sequence>?2 AND sequence<=?3 ORDER BY sequence LIMIT ?4"
+    );
+    let mut statement = connection
+        .prepare_cached(&sql)
+        .map_err(|error| storage(error.to_string()))?;
+    let rows = statement
+        .query_map(
+            params![
+                operation.as_str(),
+                after.unwrap_or(0),
+                cut.read.journal,
+                i64::try_from(limit + 1).expect("bounded page limit")
+            ],
+            |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .map_err(|error| storage(error.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| storage(error.to_string()))?;
     let more = rows.len() > limit;
-    let items: Vec<_> = rows.into_iter().take(limit).map(|(sequence, id)| (sequence, crate::runtime::identity::AuxiliaryCallId::new(id))).collect();
+    let items: Vec<_> = rows
+        .into_iter()
+        .take(limit)
+        .map(|(sequence, id)| (sequence, crate::runtime::identity::AuxiliaryCallId::new(id)))
+        .collect();
     let next_offset = more.then(|| items.last().expect("positive page limit").0);
-    Ok(crate::durable::observation::TraceCompactionCallIds { total, items, next_offset })
+    Ok(crate::durable::observation::TraceCompactionCallIds {
+        total,
+        items,
+        next_offset,
+    })
 }
 
 impl TraceFactKind {

@@ -317,6 +317,9 @@ impl RuntimeInner {
                 gate.enter();
             }
         }
+        // The exact triggering Attempt has returned its capture future; if it
+        // never transferred that capture, no worker can now own the slot.
+        self.settle_abandoned_async_capture(Some(&attempt_id));
         // Test-only gate: the coordinator lock is released and the
         // current-attempt slot is already clear, but this task has not run
         // its final admission callback and has not returned, so it still

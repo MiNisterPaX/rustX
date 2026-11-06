@@ -153,12 +153,16 @@ pub(super) fn validate_request_start_coordinates(
             "auxiliary Call start allowance is three".into(),
         ));
     }
-    if request_id.as_str().is_empty() || request_id.as_str().len() > AUXILIARY_REQUEST_ID_BYTES_MAX {
+    if request_id.as_str().is_empty() || request_id.as_str().len() > AUXILIARY_REQUEST_ID_BYTES_MAX
+    {
         return Err(ConversationStoreError::InvalidReference(format!(
             "auxiliary RequestId must contain 1..={AUXILIARY_REQUEST_ID_BYTES_MAX} bytes"
         )));
     }
-    if model.is_empty() || model.len() > AUXILIARY_REQUEST_MODEL_BYTES_MAX || model.chars().any(char::is_control) {
+    if model.is_empty()
+        || model.len() > AUXILIARY_REQUEST_MODEL_BYTES_MAX
+        || model.chars().any(char::is_control)
+    {
         return Err(ConversationStoreError::InvalidReference(format!(
             "auxiliary request model name must contain 1..={AUXILIARY_REQUEST_MODEL_BYTES_MAX} bytes without control characters"
         )));
@@ -170,7 +174,10 @@ pub(super) fn validate_request_start_input(
     start: &AuxiliaryRequestStart,
 ) -> Result<(), ConversationStoreError> {
     validate_request_start_coordinates(start.ordinal, &start.request_id, &start.model)?;
-    start.invocation.validate().map_err(|error| ConversationStoreError::InvalidReference(error.into()))?;
+    start
+        .invocation
+        .validate()
+        .map_err(|error| ConversationStoreError::InvalidReference(error.into()))?;
     let maximum_usage = ModelUsage {
         input_tokens: Some(u64::MAX),
         output_tokens: Some(u64::MAX),

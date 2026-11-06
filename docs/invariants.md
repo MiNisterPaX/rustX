@@ -453,9 +453,11 @@ writer-absent registry entry so a later load can attempt exclusive recovery.
 An unproven physical exit must retain isolation. Neither failure is promoted
 to successful quiescence, and recovery never redispatches an old RequestId.
 
-Cancellation winning Summary operation admission settles the Agent Attempt as
-cancelled with its native reason. It emits neither CompactionFailed nor
-AttemptFailed, including when compaction was recovering a provider overflow.
+Attempt cancellation winning foreground Summary operation admission settles
+that Agent Attempt as cancelled with its native reason. It emits neither
+CompactionFailed nor AttemptFailed, including during provider-overflow recovery.
+Independent asynchronous admission and cancellation belong to the matching
+Session-scoped operation; they cannot cancel or reopen its triggering Attempt.
 Capacity and lifecycle-boundary refusals both arbitrate under the cancellation
 grant: completed cancellation cannot become Busy when Call slots are occupied
 or another native commit holds the lifecycle boundary. Active, uncancelled
@@ -7990,8 +7992,9 @@ outside this historical rule.
 Default Summary planning renders history once. Exact monotone whole-request prices
 from `DefaultTokenEstimator` support complete binary interval selection without
 per-message rounded token sums: deleting a prefix with fixed core inputs cannot
-increase primary/recent prices. Summary chunks are priced separately. Production image/upload capture freezes validated resources for the logical
-generation (manual Compaction: operation lifetime). Shared upload-then-image
+increase primary/recent prices. Summary chunks are priced separately. Primary
+image/upload capture freezes validated resources for the logical generation;
+Compaction capture freezes its own resources for the operation lifetime. Shared upload-then-image
 materialization preserves surviving message bytes under prefix deletion: newest-16
 cannot promote an older omitted occurrence whose sixteen newer occurrences survive.
 Historical-only and complete-primary image unions are frozen separately for slot

@@ -10,6 +10,22 @@ const descriptorIdentities = [
   { role: 'assistant', identity: null, retired: false },
   { role: 'user', identity: 'live', retired: false },
 ];
+
+it.each([
+  { settled: 'current', matches: true },
+  { settled: 'older', matches: false },
+])('Attempt settlement clears only its own foreground compaction progress ($settled)', ({ settled, matches }) => {
+  const operations = [{ status: { operation_id: 'independent', admission_generation: '1', triggering_attempt_id: 'current', waiting_attempt_id: null, phase: 'generating' as const, accepted_fragments: 1, diagnostic: null }, live: true }];
+  const context = { compaction_in_progress: true, compaction_count: 0, compaction_operations: operations,
+    compaction_progress: { operation_id: 'foreground', mode: 'overflow' as const, accepted_fragments: 1, source_ranges: [], generation: null } };
+  const state = { ...snapshot(), context, attempt: { attempt_id: 'current', phase: { type: 'running' as const }, turn: 1 } };
+  const outcome = { type: 'completed' as const, finish_reason: { type: 'stop' as const } };
+  const next = fold(state, { type: 'attempt_settled', attempt_id: settled, outcome });
+  expect(next.context?.compaction_in_progress).toBe(!matches);
+  expect(next.context?.compaction_progress).toEqual(matches ? undefined : context.compaction_progress);
+  expect(next.context?.compaction_operations).toBe(operations);
+  expect(next.attempt?.phase).toEqual(matches ? { type: 'settled', outcome } : state.attempt.phase);
+});
 it.each([undefined, null, 'a'].flatMap(attempt_id => descriptorIdentities.map(test => ({ ...test, attempt_id }))))('descriptor-only publication retires only its exact live Assistant identity ($role, $identity; AttemptId: $attempt_id)', ({ role, identity, retired, attempt_id }) => {
   const state = { ...snapshot(), attempt: { attempt_id: 'a', phase: { type: 'running' as const }, turn: 1, in_flight: { message_id: 'live', blocks: [] } } };
   const descriptor = { identity, locator: { type: 'by_ledger_position' as const, position: 17 }, role, kind: 'message', block_count: '20', tool_call_count: '20', tool_calls: [], content: [], collections: [] };

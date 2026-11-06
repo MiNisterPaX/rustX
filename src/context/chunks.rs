@@ -712,7 +712,9 @@ mod tests {
 
     fn capture_cut() -> super::super::resources::ResourceReadCut {
         super::super::resources::ResourceReadCut {
-            conversation_id: crate::runtime::identity::ConversationId::new("frozen-coverage"),
+            conversation_id: crate::runtime::identity::ConversationId::new(
+                "conv_019a0000-0000-7000-8000-000000000003",
+            ),
             ledger: super::super::resources::LedgerFrontier(2),
             journal: super::super::resources::JournalFrontier(7),
             transcript: crate::durable::TranscriptCursor::new(2),

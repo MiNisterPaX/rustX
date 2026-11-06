@@ -381,6 +381,7 @@ impl RuntimeInner {
     /// Restores the sole conversation state, records any durable failure,
     /// clears the maintenance slot, and hands pending inbound back to the one
     /// admission path.
+    #[allow(clippy::too_many_lines)] // Restore ownership and settle the full manual operation together.
     pub(super) fn finish_manual_compaction(
         self: &Arc<Self>,
         task: ManualCompactionTaskResult,

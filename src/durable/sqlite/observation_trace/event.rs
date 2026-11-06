@@ -263,9 +263,11 @@ fn compaction_start(
     operation: &crate::runtime::identity::CompactionOperationId,
     before: u64,
 ) -> Result<Option<u64>, ConversationStoreError> {
-    find(connection,
+    find(
+        connection,
         "SELECT sequence FROM events INDEXED BY events_compaction_operation_kind_idx WHERE json_extract(event_json,'$.event.operation_id')=?1 AND json_extract(event_json,'$.event.type')='compaction_started' AND sequence<?2 ORDER BY sequence DESC LIMIT 1",
-        params![operation.as_str(),before])
+        params![operation.as_str(), before],
+    )
 }
 fn adoption(
     connection: &Connection,
@@ -622,7 +624,9 @@ fn terminal_data(
             )?);
             terminal(C::Failed)
         }
-        E::AttemptCancelled { .. } | E::WorkflowCancelled { .. } | E::CompactionCancelled { .. } => terminal(C::Cancelled),
+        E::AttemptCancelled { .. }
+        | E::WorkflowCancelled { .. }
+        | E::CompactionCancelled { .. } => terminal(C::Cancelled),
         E::CompactionSkipped { .. } => terminal(C::Completed),
         E::AttemptTimedOut { .. } => terminal(C::TimedOut),
         E::AttemptLimitExceeded { .. } => terminal(C::Limited),

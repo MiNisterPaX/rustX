@@ -93,7 +93,7 @@ fn captured_prefix_requires_exact_cut_digest_and_frontier() {
     assert!(captured_history(&connection, store.conversation_id(), &forged_frontier).is_err());
     let mut forged_root = record.clone();
     forged_root.root = CoverageRoot::LedgerGenesis {
-        conversation_id: ConversationId::new("other"),
+        conversation_id: ConversationId::new("conv_019a0000-0000-7000-8000-000000000004"),
     };
     assert!(captured_history(&connection, store.conversation_id(), &forged_root).is_err());
     let mut changed_digest = record.clone();
@@ -209,7 +209,7 @@ fn competing_native_head_must_have_less_compatible_coverage() {
     );
     let mut foreign = second;
     foreign.root = CoverageRoot::LedgerGenesis {
-        conversation_id: ConversationId::new("different"),
+        conversation_id: ConversationId::new("conv_019a0000-0000-7000-8000-000000000004"),
     };
     assert!(
         validate_current_suffix(

@@ -2,7 +2,12 @@
 
 use std::cmp::Ordering;
 
-use super::*;
+use super::{
+    AttemptId, CancellationSignal, CheckpointCandidate, CheckpointItem, CheckpointMessage,
+    CheckpointSourceRef, CompactionConstraints, CompactionExecutionError, ContextError,
+    ContextErrorKind, ContextRuntime, ConversationState, ConversationStore, ExecutedCompaction,
+    GeneratedCompaction, TurnId, Utc, commit_compaction, resource_failure,
+};
 use crate::context::resources::{CompactionResources, ResourceLimits};
 use crate::runtime::types::{TokenMeasurement, TokenMeasurementSource};
 
@@ -19,7 +24,7 @@ pub(crate) struct CurrentInstallation<'a> {
 }
 
 pub(crate) enum ActivationOutcome {
-    Committed(ExecutedCompaction),
+    Committed(Box<ExecutedCompaction>),
     Superseded,
     Incomparable,
     Inadmissible(ContextError),
@@ -267,8 +272,8 @@ pub(crate) fn activate_generated(
             timestamp: Utc::now(),
         };
         match commit_compaction(conversation, store, input, None) {
-            Err(CompactionExecutionError::HeadChanged) => continue,
-            Ok(completed) => return Ok(ActivationOutcome::Committed(completed)),
+            Err(CompactionExecutionError::HeadChanged) => {}
+            Ok(completed) => return Ok(ActivationOutcome::Committed(Box::new(completed))),
             Err(error) => return Err(error),
         }
     }

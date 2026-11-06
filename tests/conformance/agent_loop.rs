@@ -1599,10 +1599,7 @@ async fn compaction_uses_an_explicit_cross_provider_summary_profile() {
     let AuxiliaryModelView::Explicit(summary) = &frozen.summary else {
         panic!("the attempt must retain its explicit Summary binding")
     };
-    assert_eq!(
-        summary.model.to_string(),
-        "logical-summary-alias"
-    );
+    assert_eq!(summary.model.to_string(), "logical-summary-alias");
     assert_eq!(
         summary.protocol,
         rustx::model::ModelProtocol::AnthropicMessages
@@ -1644,20 +1641,52 @@ async fn compaction_uses_an_explicit_cross_provider_summary_profile() {
         }
     )));
     assert!(snapshot.context.projection_head.is_some());
-    let summary_call = journal.iter().find_map(|entry| match &entry.event {
-        E::AuxiliaryCallStarted { call_id, input: AuxiliaryInputEvidence::Compaction { .. }, .. } => Some(call_id.clone()),
-        _ => None,
-    }).expect("native Summary Call start");
+    let summary_call = journal
+        .iter()
+        .find_map(|entry| match &entry.event {
+            E::AuxiliaryCallStarted {
+                call_id,
+                input: AuxiliaryInputEvidence::Compaction { .. },
+                ..
+            } => Some(call_id.clone()),
+            _ => None,
+        })
+        .expect("native Summary Call start");
     let before_cut = driver.store.auxiliary_audit_cut().unwrap();
-    let before = driver.store.read_auxiliary_call_requests(&summary_call, before_cut, None, 2).unwrap();
+    let before = driver
+        .store
+        .read_auxiliary_call_requests(&summary_call, before_cut, None, 2)
+        .unwrap();
     assert_eq!(before.len(), 1);
     assert_eq!(before[0].invocation.provider.as_str(), "emulator-anthropic");
-    assert_eq!(before[0].invocation.model_ref.to_string(), "logical-summary-alias");
-    assert_eq!(before[0].invocation.profile.as_ref().unwrap().as_str(), "precise");
+    assert_eq!(
+        before[0].invocation.model_ref.to_string(),
+        "logical-summary-alias"
+    );
+    assert_eq!(
+        before[0].invocation.profile.as_ref().unwrap().as_str(),
+        "precise"
+    );
     assert_eq!(before[0].model, ANTHROPIC_MODEL);
-    driver.model_set(SessionModelConfig::of(ModelRef::parse(&format!("emulator/{SECOND_MODEL}")).unwrap())).await.unwrap();
-    let after = driver.store.read_auxiliary_call_requests(&summary_call, driver.store.auxiliary_audit_cut().unwrap(), None, 2).unwrap();
-    assert_eq!(after, before, "historical request identity is independent of current Session configuration");
+    driver
+        .model_set(SessionModelConfig::of(
+            ModelRef::parse(&format!("emulator/{SECOND_MODEL}")).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let after = driver
+        .store
+        .read_auxiliary_call_requests(
+            &summary_call,
+            driver.store.auxiliary_audit_cut().unwrap(),
+            None,
+            2,
+        )
+        .unwrap();
+    assert_eq!(
+        after, before,
+        "historical request identity is independent of current Session configuration"
+    );
     emulator.finish().await;
 }
 

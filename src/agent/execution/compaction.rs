@@ -39,6 +39,13 @@ enum BlockingRun {
     Terminal(Terminal),
 }
 
+enum CompetitionWinner {
+    Background(Option<crate::context::asynchronous::CompactionDelivery>),
+    Blocking(
+        Box<Result<crate::context::compaction::GeneratedCompaction, CompactionExecutionError>>,
+    ),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CompactionNeed {
     Optional,
@@ -380,6 +387,7 @@ impl AgentExecution<'_> {
     }
 
     /// Consume exactly one result selected at the current preparation cut.
+    #[allow(clippy::too_many_lines)] // Keep installation and its complete settlement table together.
     pub(super) fn consume_background_compaction(
         &mut self,
         delivery: crate::context::asynchronous::CompactionDelivery,
@@ -1011,14 +1019,14 @@ impl AgentExecution<'_> {
                     .map(BlockingRun::Completed);
             }
         };
-        let observer = self.observer;
+        let event_observer = self.observer;
         let progress_store = store.clone();
         let progress_attempt = attempt_id.clone();
         let progress = move |envelope| -> Result<(), CompactionExecutionError> {
             let persisted = progress_store
                 .append_event(envelope)
                 .map_err(|error| CompactionExecutionError::Durable(error.to_string()))?;
-            if let Some(observer) = observer {
+            if let Some(observer) = event_observer {
                 observer.observe_event(
                     &progress_attempt,
                     &persisted.event,
@@ -1039,21 +1047,15 @@ impl AgentExecution<'_> {
             &before_call,
         ));
         let mut waiting = Box::pin(coordinator.wait(&admission, &attempt_id, &attempt_signal));
-        enum Winner {
-            Background(Option<CompactionDelivery>),
-            Blocking(
-                Result<crate::context::compaction::GeneratedCompaction, CompactionExecutionError>,
-            ),
-        }
         let winner = tokio::select! {
             biased;
-            delivery = &mut waiting => Winner::Background(delivery),
-            generated = &mut generation => Winner::Blocking(generated),
+            delivery = &mut waiting => CompetitionWinner::Background(delivery),
+            generated = &mut generation => CompetitionWinner::Blocking(Box::new(generated)),
         };
         drop(waiting);
         let generated = match winner {
-            Winner::Blocking(generated) => generated,
-            Winner::Background(Some(CompactionDelivery::Ready(ready))) => {
+            CompetitionWinner::Blocking(generated) => *generated,
+            CompetitionWinner::Background(Some(CompactionDelivery::Ready(ready))) => {
                 let current = CurrentInstallation {
                     context: &self.context_runtime,
                     request: input.request,
@@ -1142,7 +1144,7 @@ impl AgentExecution<'_> {
                 }
                 generation.await
             }
-            Winner::Background(Some(CompactionDelivery::Failed(error))) => {
+            CompetitionWinner::Background(Some(CompactionDelivery::Failed(error))) => {
                 if error.kind == ContextErrorKind::AuxiliaryDurabilityFailed {
                     self.durable_failure_kind = Some(DurableFailureKind::Compaction);
                     self.durable_failure = Some(error.message.clone());
@@ -1151,7 +1153,7 @@ impl AgentExecution<'_> {
                 self.compaction_control.suppress_optional_for_attempt();
                 generation.await
             }
-            Winner::Background(None) => generation.await,
+            CompetitionWinner::Background(None) => generation.await,
         };
         let result = match generated {
             Ok(generated) => crate::context::compaction::activate_blocking_generated(

@@ -8,6 +8,7 @@ import { Server, snapshot } from './fixture';
 let server: Server;
 afterEach(() => { cleanup(); server?.client.disconnect(); });
 const receipt = (generation: string): RuntimeClientCompactionView => ({
+  operation_id: `compaction-operation-${generation}`,
   generation, checkpoint_id:`conv_8498648a-66ba-716f-8243-8cf147533e5${generation}`, activation_id:generation,
   tokens_before:{input_tokens:'8400',source:'estimated'}, estimated_tokens_after:'1900',
 });

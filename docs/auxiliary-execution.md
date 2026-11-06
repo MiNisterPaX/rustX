@@ -10,6 +10,14 @@ Agent requests retain their native Snapshot, selected-input root/digest/count, C
 
 A Call records bounded purpose, trigger, business source, input-selection evidence and fingerprints. Purpose and trigger are consumer-defined attribution strings, each limited to 512 UTF-8 bytes, nonempty and without control characters. Trigger describes the activation cause, not a transport category. The Store has no business-purpose dispatch or consumer allowlist. Business sources may be native Compaction/Human references or opaque consumer-owned namespace/reference pairs with the same text bounds. Opaque references grant no storage, inheritance or execution authority.
 
+Each physical RequestStarted also retains a redacted frozen invocation identity:
+ProviderId, logical ModelRef and selected Profile, with the wire model kept
+separately. Native execution captures these from its actual resolved invocation;
+neither model-reference spelling nor a later Session selection supplies them.
+The identity JSON is capped at 2 KiB before hydration. Retry, exact replay,
+confirmation and inherited Summary evidence retain the same binding. Parameters,
+credentials, endpoints and reasoning text are absent from this identity.
+
 Suggested-input generation uses the same contract with consumer-defined attribution and frozen historical context or temporary draft input. Candidate presentation and expiry belong to the consumer. An explicit user submission follows the normal Human input path; generating or displaying candidates leaves canonical history and primary Agent obligations unchanged.
 
 Business source and input selection have independent coordinates: native source references must exist when the Call starts, but may be newer than its frozen input cut. Only selected historical input references must be visible at that input cut. A historical selection records the complete native ResourceReadCut, including canonical and projection coordinates; a Journal sequence alone does not identify canonical history. Temporary input has no implied historical cut or retained copy. Explicit selected message references are independently bounded. These facts describe what was selected, not how to reconstruct absent temporary bytes.

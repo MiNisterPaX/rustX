@@ -76,6 +76,7 @@ async fn start_background(runtime: &ConversationRuntime) -> CompactionAdmission 
 /// A background result which wins an authorized recovery race closes the
 /// exact competing blocking operation before its own checkpoint is committed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // One ordered race proves loser cleanup before the winner's commit.
 async fn ready_background_cancels_and_joins_competing_blocking_scope() {
     use crate::model::event::ModelEvent;
     use crate::model::types::ModelProtocol;
@@ -125,10 +126,18 @@ async fn ready_background_cancels_and_joins_competing_blocking_scope() {
         parks.wait_for(|count| *count >= 1).await.unwrap();
     })
     .await;
-    let fresh_text = "new ".repeat(1_700);
+    // The whole request must exceed the hard limit, while the retained tail
+    // plus the captured-prefix Summary must fit. The blocking start and the
+    // successful background commit below prove both sides at the real cut.
+    let fresh_text = "new ".repeat(750);
     runtime.submit_inbound(text_content(&fresh_text)).unwrap();
     within_liveness_guard("competing blocking Summary park", async {
-        parks.wait_for(|count| *count >= 2).await.unwrap();
+        model
+            .streams_started()
+            .wait_for(|count| *count >= 2)
+            .await
+            .unwrap();
+        parks.wait_for(|count| *count >= 1).await.unwrap();
     })
     .await;
     release_background.send(true).unwrap();
@@ -160,7 +169,14 @@ async fn ready_background_cancels_and_joins_competing_blocking_scope() {
                 RuntimeEvent::CompactionCancelled { operation_id } if *operation_id == blocking_id
             )
         })
-        .expect("blocking competitor settled cancelled");
+        .unwrap_or_else(|| {
+            let status = work.state.lock().unwrap().status.clone();
+            let facts: Vec<_> = events.iter().map(|event| &event.event).collect();
+            panic!(
+                "blocking competitor {blocking_id} did not settle cancelled; background status: {status:?}; durability failure: {:?}; journal: {facts:#?}",
+                runtime.inner.durability_failure_diagnostic(),
+            )
+        });
     let committed = events.iter().position(|event| matches!(&event.event,
         RuntimeEvent::CompactionCompleted { operation_id, .. } if *operation_id == background.operation_id
     )).expect("background operation committed");
@@ -266,9 +282,9 @@ async fn mandatory_join_rejects_provably_insufficient_frozen_scope() {
                 crate::model::types::PromptFallbackAuthorization::default(),
             response_schema: None,
             response_byte_limit: None,
-            images: Default::default(),
+            images: BTreeMap::default(),
             invocation: model.primary().invocation_config(),
-            messages: Default::default(),
+            messages: crate::model::SelectedModelInput::default(),
             tools: resources.capability().tool_registry().model_definitions(),
             effective_system_prompt: String::new(),
             continuation: None,
@@ -300,6 +316,7 @@ async fn mandatory_join_rejects_provably_insufficient_frozen_scope() {
 /// A result arriving during a started primary request waits for a later
 /// boundary and cannot alter the already frozen request or its source head.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // One scenario spans publication, the active primary and idle installation.
 async fn late_ready_does_not_rewrite_the_running_primary_request() {
     let directory = tempfile::tempdir().unwrap();
     let (release_background, background_gate) = model_release();
@@ -336,7 +353,12 @@ async fn late_ready_does_not_rewrite_the_running_primary_request() {
         ))
         .unwrap();
     within_liveness_guard("primary parked", async {
-        parks.wait_for(|value| *value >= 2).await.unwrap();
+        model
+            .streams_started()
+            .wait_for(|count| *count >= 2)
+            .await
+            .unwrap();
+        parks.wait_for(|value| *value >= 1).await.unwrap();
     })
     .await;
     let frozen_primary = model.requests()[1].clone();
@@ -386,7 +408,9 @@ async fn late_ready_does_not_rewrite_the_running_primary_request() {
             changed.as_mut().enable();
             {
                 let state = work.state.lock().unwrap();
-                if matches!(state.phase, Phase::Ready(_)) {
+                if matches!(state.phase, Phase::Ready(_))
+                    && state.published.as_ref() == Some(&state.status)
+                {
                     break;
                 }
                 assert!(!matches!(state.phase, Phase::Failed(_) | Phase::Terminal));
@@ -530,9 +554,9 @@ async fn ready_status_write_failure_drains_a_running_primary() {
     first.content = text_content(&"old context ".repeat(512));
     let mut second = runtime_inbound_message("failure-old-two");
     second.content = text_content(&"retained context ".repeat(512));
-    store
-        .initialize(&[MessageBlock::User(first), MessageBlock::User(second)])
-        .unwrap();
+    store.initialize(&[]).unwrap();
+    store.append_canonical(&MessageBlock::User(first)).unwrap();
+    store.append_canonical(&MessageBlock::User(second)).unwrap();
     let (release_background, background_gate) = model_release();
     let mut background = summary_turn_script("old fact");
     background.insert(1, FakeStep::ParkUntilReleased(background_gate));
@@ -559,7 +583,12 @@ async fn ready_status_write_failure_drains_a_running_primary() {
         .submit_inbound(text_content("primary is already in flight"))
         .unwrap();
     within_liveness_guard("primary parked", async {
-        parks.wait_for(|value| *value >= 2).await.unwrap();
+        model
+            .streams_started()
+            .wait_for(|count| *count >= 2)
+            .await
+            .unwrap();
+        parks.wait_for(|value| *value >= 1).await.unwrap();
     })
     .await;
     let work = runtime.inner.async_work(&admission).unwrap();
@@ -612,6 +641,7 @@ async fn ready_status_write_failure_drains_a_running_primary() {
 /// A completed and settled Summary has no compaction-age expiry; fresh
 /// installation authority remains necessary after its Auxiliary scope expires.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // Keep capture, clock expiry and fresh installation in one proof.
 async fn accepted_ready_result_can_install_after_original_scope_deadline() {
     use crate::context::compaction::{
         ActivationOutcome, CurrentInstallation, activate_generated, generate_compaction,
@@ -731,7 +761,7 @@ async fn accepted_ready_result_can_install_after_original_scope_deadline() {
         prompt_fallback_authorization: crate::model::types::PromptFallbackAuthorization::default(),
         response_schema: None,
         response_byte_limit: None,
-        images: Default::default(),
+        images: BTreeMap::default(),
         invocation: model.primary().invocation_config(),
         messages: history.messages,
         tools,
@@ -876,7 +906,12 @@ async fn explicit_cancel_targets_only_the_named_independent_operation() {
         .submit_inbound(text_content("keep the primary running"))
         .unwrap();
     within_liveness_guard("primary parked", async {
-        parks.wait_for(|value| *value >= 2).await.unwrap();
+        model
+            .streams_started()
+            .wait_for(|count| *count >= 2)
+            .await
+            .unwrap();
+        parks.wait_for(|value| *value >= 1).await.unwrap();
     })
     .await;
     assert!(
@@ -927,6 +962,7 @@ async fn explicit_cancel_targets_only_the_named_independent_operation() {
 /// A waiting Attempt may detach, and a selected result may be returned to the
 /// same Session-owned operation. Shutdown still joins the real Summary call.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // One operation crosses configuration, Attempts, waiter handoff and drain.
 async fn detached_waiter_preserves_ready_identity_and_shutdown_joins() {
     let directory = tempfile::tempdir().unwrap();
     let (release, receiver) = model_release();
@@ -1033,9 +1069,12 @@ async fn detached_waiter_preserves_ready_identity_and_shutdown_joins() {
             crate::model::types::ModelProtocol::OpenAiChatCompletions,
         )
         .with_max_output_tokens(512)
-        .with_profiles("focused", serde_json::json!({
-            "focused": {"requestParams": {"temperature": 0.1}}
-        }))],
+        .with_profiles(
+            "focused",
+            serde_json::json!({
+                "focused": {"requestParams": {"temperature": 0.1}}
+            }),
+        )],
         "scripted/reconfigured",
         &crate::scripted_suites::support::model::ScriptedAdapterFactory::new(adapter),
     );
@@ -1089,7 +1128,10 @@ async fn detached_waiter_preserves_ready_identity_and_shutdown_joins() {
             frozen_request.invocation.model
         );
         assert_eq!(
-            current.primary().profile().map(|profile| profile.as_str()),
+            current
+                .primary()
+                .profile()
+                .map(crate::model::catalog::ModelProfileId::as_str),
             Some("focused")
         );
     }
@@ -1106,7 +1148,12 @@ async fn detached_waiter_preserves_ready_identity_and_shutdown_joins() {
         .unwrap();
     let mut parks = model.parks();
     within_liveness_guard("trigger Attempt model park", async {
-        parks.wait_for(|count| *count >= 2).await.unwrap();
+        model
+            .streams_started()
+            .wait_for(|count| *count >= 2)
+            .await
+            .unwrap();
+        parks.wait_for(|count| *count >= 1).await.unwrap();
     })
     .await;
     runtime.cancel_current_attempt(&trigger).unwrap();
@@ -1185,7 +1232,9 @@ async fn detached_waiter_preserves_ready_identity_and_shutdown_joins() {
             changed.as_mut().enable();
             {
                 let state = work.state.lock().unwrap();
-                if matches!(state.phase, Phase::Ready(_)) {
+                if matches!(state.phase, Phase::Ready(_))
+                    && state.published.as_ref() == Some(&state.status)
+                {
                     break;
                 }
                 assert!(!matches!(state.phase, Phase::Failed(_) | Phase::Terminal));
@@ -1219,4 +1268,228 @@ async fn detached_waiter_preserves_ready_identity_and_shutdown_joins() {
         RuntimeEvent::CompactionOperationUpdated { status }
             if status.operation_id == admission.operation_id && status.phase == CompactionOperationPhase::Cancelled
     )));
+}
+
+/// A capture that was never transferred cannot outlive its triggering
+/// Attempt's completed execution or retain the Session's proactive slot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn settled_trigger_releases_its_abandoned_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let (runtime, model) = headless_runtime(&directory, vec![one_turn_script()], None, None).await;
+    runtime.activate();
+    let trigger = AttemptId::for_conversation(&runtime.inner.conversation_id, 0);
+    let coordinator = RuntimeCompactionCoordinator(Arc::downgrade(&runtime.inner));
+    let admission = coordinator.admit(&trigger).unwrap().unwrap();
+    let work = runtime.inner.async_work(&admission).unwrap();
+
+    runtime
+        .submit_inbound(text_content("finish the trigger"))
+        .unwrap();
+    within_liveness_guard("trigger settlement", await_settled_ledger(&runtime, 0)).await;
+    within_liveness_guard("abandoned capture status", async {
+        loop {
+            let changed = work.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let state = work.state.lock().unwrap();
+                if state.status.phase == CompactionOperationPhase::Cancelled
+                    && state.published.as_ref() == Some(&state.status)
+                {
+                    break;
+                }
+            }
+            changed.await;
+        }
+    })
+    .await;
+    assert!(admission.cancellation.is_cancelled());
+    assert_eq!(model.requests().len(), 1, "no Summary worker was started");
+    within_liveness_guard("orphan-free shutdown", runtime.shutdown())
+        .await
+        .unwrap();
+    assert!(runtime.inner.async_work(&admission).is_none());
+}
+
+/// An unrelated Attempt cannot retire a capture; shutdown owns the final
+/// no-worker cleanup after foreground ownership has returned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn drain_releases_abandoned_capture_after_unrelated_attempt() {
+    let directory = tempfile::tempdir().unwrap();
+    let (runtime, model) = headless_runtime(&directory, vec![one_turn_script()], None, None).await;
+    runtime.activate();
+    let coordinator = RuntimeCompactionCoordinator(Arc::downgrade(&runtime.inner));
+    let admission = coordinator
+        .admit(&AttemptId::new("another-trigger"))
+        .unwrap()
+        .unwrap();
+    let work = runtime.inner.async_work(&admission).unwrap();
+
+    runtime
+        .submit_inbound(text_content("unrelated turn"))
+        .unwrap();
+    within_liveness_guard("unrelated settlement", await_settled_ledger(&runtime, 0)).await;
+    assert!(matches!(work.state.lock().unwrap().phase, Phase::Capturing));
+    assert!(!admission.cancellation.is_cancelled());
+    within_liveness_guard("abandoned capture drain", runtime.shutdown())
+        .await
+        .unwrap();
+    let state = work.state.lock().unwrap();
+    assert_eq!(state.status.phase, CompactionOperationPhase::Cancelled);
+    assert_eq!(state.published.as_ref(), Some(&state.status));
+    drop(state);
+    assert!(work.joined.load(Ordering::Acquire));
+    assert!(work.lifecycle.lock().unwrap().is_none());
+    assert!(runtime.inner.async_work(&admission).is_none());
+    assert_eq!(model.requests().len(), 1, "no Summary worker was started");
+}
+
+/// The manager probes and claims native idleness before it starts the shared
+/// shutdown owner. Ready results do not pin residency, but their abandonment
+/// must be recorded before the old writer reports quiescence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // Keep generation, idle claim and durable retirement in one ordered proof.
+async fn idle_claim_retires_deferred_ready_and_supervises_generation() {
+    use crate::model::types::ModelProtocol;
+    use crate::scripted_suites::support::model::{
+        FixtureModel, ScriptedAdapterFactory, fixture_session_model,
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let (release, gate) = model_release();
+    let mut summary = summary_turn_script("captured context");
+    summary.insert(1, FakeStep::ParkUntilReleased(gate));
+    let mut first = runtime_inbound_message("idle-old-one");
+    first.content = text_content(&"old history ".repeat(512));
+    let mut second = runtime_inbound_message("idle-old-two");
+    second.content = text_content(&"more history ".repeat(512));
+    let (runtime, model) = headless_runtime_with_options(
+        &directory,
+        vec![summary],
+        None,
+        None,
+        HeadlessRuntimeOptions {
+            initial_messages: vec![MessageBlock::User(first), MessageBlock::User(second)],
+            ..HeadlessRuntimeOptions::default()
+        },
+    )
+    .await;
+    runtime.activate();
+    let idle_before = within_liveness_guard("initial idle epoch", async {
+        loop {
+            if let Ok(epoch) = runtime.idle_epoch() {
+                break epoch;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let admission = start_background(&runtime).await;
+    let work = runtime.inner.async_work(&admission).unwrap();
+    within_liveness_guard("active Summary parked", async {
+        model.parks().wait_for(|count| *count >= 1).await.unwrap();
+    })
+    .await;
+    assert!(runtime.idle_epoch().is_err());
+    assert!(!runtime.claim_idle(idle_before));
+    assert!(!admission.cancellation.is_cancelled());
+    assert_eq!(model.streams_exited_count(), 0);
+
+    // Hold the idle slot while the physical worker settles, then change the
+    // current model so this previously valid capture cannot fit now.
+    runtime.inner.lock_state().manual_compaction = Some(CurrentManualCompaction {
+        operation_id: crate::runtime::identity::CompactionOperationId::new("idle-test-slot"),
+        cancellation: AgentCancellation::new(CancellationReason::RuntimeShutdown),
+    });
+    release.send(true).unwrap();
+    within_liveness_guard("Summary worker joined", async {
+        loop {
+            let changed = work.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if work.joined.load(Ordering::Acquire) {
+                break;
+            }
+            changed.await;
+        }
+    })
+    .await;
+    let adapter: Arc<dyn ModelAdapter> = model.clone();
+    {
+        let mut state = runtime.inner.lock_state();
+        state.model = fixture_session_model(
+            &[
+                FixtureModel::text("scripted/small", ModelProtocol::OpenAiChatCompletions)
+                    .with_context_window(1_024)
+                    .with_max_output_tokens(128),
+            ],
+            "scripted/small",
+            &ScriptedAdapterFactory::new(adapter),
+        );
+        state.manual_compaction = None;
+    }
+    runtime.inner.install_ready_async_when_idle().await;
+    within_liveness_guard("ineligible Ready result deferred", async {
+        loop {
+            let changed = work.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let state = work.state.lock().unwrap();
+                if matches!(state.phase, Phase::Ready(_))
+                    && state.status.diagnostic.is_some()
+                    && state.published.as_ref() == Some(&state.status)
+                {
+                    break;
+                }
+                assert!(!matches!(state.phase, Phase::Failed(_) | Phase::Terminal));
+            }
+            changed.await;
+        }
+    })
+    .await;
+
+    within_liveness_guard("claim deferred idle result", async {
+        loop {
+            if let Ok(epoch) = runtime.idle_epoch()
+                && runtime.claim_idle(epoch)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let outcome = within_liveness_guard("idle-claimed shutdown", runtime.shutdown_outcome())
+        .await
+        .unwrap();
+    outcome.logical.unwrap();
+    outcome.physical.unwrap();
+    assert!(admission.cancellation.is_cancelled());
+    assert!(runtime.inner.async_work(&admission).is_none());
+    assert!(runtime.inner.store.projection_head().unwrap().is_none());
+    assert_eq!(model.requests().len(), 1, "shutdown starts no new Summary");
+
+    // Read the old Store directly: no cold reopen or restart reconciliation
+    // may be needed to discover the terminal operation outcome.
+    let events = runtime.inner.store.read_events(None, 128).unwrap().events;
+    let terminals: Vec<_> = events
+        .iter()
+        .filter_map(|event| match &event.event {
+            RuntimeEvent::CompactionOperationUpdated { status }
+                if status.operation_id == admission.operation_id && status.phase.is_terminal() =>
+            {
+                Some(status.phase)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(terminals, [CompactionOperationPhase::Cancelled]);
+    let again = runtime.shutdown_outcome().await.unwrap();
+    again.logical.unwrap();
+    again.physical.unwrap();
+    assert_eq!(
+        runtime.inner.store.read_events(None, 128).unwrap().events,
+        events
+    );
 }

@@ -3,7 +3,15 @@
 #[cfg(test)]
 mod tests;
 
-use super::*;
+use super::{
+    CheckpointCandidate, CheckpointMessage, Connection, ConversationId, ConversationStoreError,
+    ProjectionActivationId, ProjectionCheckpoint, ProjectionCommitInput, ResourceLimits,
+    at_journal_cut, auxiliary_lineage, compile_history, invalid,
+};
+#[cfg(test)]
+use super::{
+    CheckpointId, CompactionOperationId, JournalFrontier, OriginActivation, ProjectionActivation,
+};
 use crate::context::checkpoint::CheckpointItem;
 use crate::context::coverage::PrefixCoverage;
 use crate::durable::projection::HistoricalModelInput;

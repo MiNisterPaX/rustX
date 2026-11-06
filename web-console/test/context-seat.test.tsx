@@ -99,6 +99,23 @@ it('observes native operations and preserves the exact pre-commit diagnostic', a
   expect(screen.getByRole('status').textContent).toContain('Summary provider rejected model fixture/exact');
   expect(count()).toBe(0);
 });
+
+it('retains a manual failure while a different compaction runs and commits', async () => {
+  server.held.add('context/compact');
+  render(<ContextSeat client={server.client} sessionId="A"/>);
+  compact();
+  const pending = await server.waitFor('context/compact', 1);
+  await act(async () => server.socket.deliver({ jsonrpc: '2.0', id: pending.id, error: { code: -32000, message: 'manual failure' } }));
+  const request = server.client.getSnapshot().views.A.compactionRequest!;
+  expect(request.status).toBe('failed');
+  await observe({ ...base, compaction_in_progress: true, compaction_progress: { operation_id: 'other-operation', mode: 'overflow', accepted_fragments: 1, source_ranges: [], generation: null } });
+  expect(server.client.getSnapshot().views.A.compactionRequest).toEqual(request);
+  expect(screen.getByRole('button', { name: 'compact · Compaction failed' })).toBeTruthy();
+  await observe({ ...base, compaction_count: 1, latest_compaction: { operation_id: 'other-operation', generation: '1', checkpoint_id: 'other-checkpoint', activation_id: '1', tokens_before: { input_tokens: '100', source: 'provider_reported' }, estimated_tokens_after: '20' } });
+  expect(server.client.getSnapshot().views.A.compactionRequest).toEqual(request);
+  fireEvent.click(screen.getByRole('button', { name: 'compact · Compaction failed' }));
+  expect(screen.getByRole('status').textContent).toContain('manual failure');
+});
 it.each([undefined, { estimated: false, model_deferred:false, model_source:null, input_tokens: '25', context_window_tokens: '100', model: 'frozen/model', breakdown: { system_tokens: '5', tool_tokens: '10', message_tokens: '10' } }])('an idle seat renders nothing and never discloses request occupancy: %j', async occupancy => {
   const view = render(<ContextSeat client={server.client} sessionId="A"/>);
   await observe({ ...base, occupancy: occupancy });
@@ -203,7 +220,7 @@ it('a committed checkpoint leaves the live status seat, including after remount'
   await observe({ ...base, compaction_count: 1,
     manual_compaction: { request_id: requestId, released: true, skipped: false, cancelled: false, error: null },
     projection_head: { ...projectionHead(), checkpoint_id: 'checkpoint-outside-window', activation_id: '4' },
-    latest_compaction: { generation: '1', checkpoint_id: 'checkpoint-outside-window', activation_id: '4',
+    latest_compaction: { operation_id: 'manual-compaction-operation-1', generation: '1', checkpoint_id: 'checkpoint-outside-window', activation_id: '4',
       tokens_before: { input_tokens: '100', source: 'provider_reported' }, estimated_tokens_after: '20' },
   });
   expect(server.client.getSnapshot().views.A.compactionRequest?.status).toBe('succeeded');

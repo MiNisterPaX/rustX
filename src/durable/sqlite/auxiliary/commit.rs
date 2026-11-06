@@ -10,10 +10,10 @@ use super::{
     RuntimeEvent, RuntimeEventEnvelope, SqliteConversationStore, Transaction, TransactionBehavior,
     Utc, audit_fact_bytes, call_audit_at_tx, call_row_tx, call_start_matches,
     call_started_event_id, event_at_connection, has_call_journal_fact_tx, insert_audit_fact_tx,
-    journal_prefix, owner_row_tx, params, persist_event_tx, request_audit_at_tx, request_row_query, request_row_tx,
-    request_start_matches, request_started_event_id, require_audit_fact, same_terminal_envelope,
-    seq_to_i64, storage, validate_call_start_input, validate_request_start_input,
-    validate_settlement_pair, validate_terminal_envelope_shape,
+    journal_prefix, owner_row_tx, params, persist_event_tx, request_audit_at_tx, request_row_query,
+    request_row_tx, request_start_matches, request_started_event_id, require_audit_fact,
+    same_terminal_envelope, seq_to_i64, storage, validate_call_start_input,
+    validate_request_start_input, validate_settlement_pair, validate_terminal_envelope_shape,
 };
 
 pub(super) fn run_auxiliary_write<T>(
@@ -248,14 +248,25 @@ impl SqliteConversationStore {
                 )));
             }
             if start.ordinal > 0 {
-                let first = request_row_query(transaction, "call_id=?1 AND ordinal=0", [start.call_id.as_str()])?
-                    .ok_or_else(|| ConversationStoreError::InvalidReference("auxiliary retry lacks its original request identity".into()))?;
+                let first = request_row_query(
+                    transaction,
+                    "call_id=?1 AND ordinal=0",
+                    [start.call_id.as_str()],
+                )?
+                .ok_or_else(|| {
+                    ConversationStoreError::InvalidReference(
+                        "auxiliary retry lacks its original request identity".into(),
+                    )
+                })?;
                 if first.model != start.model || first.invocation != start.invocation {
-                    return Err(ConversationStoreError::InvalidReference("auxiliary retry changed its frozen model binding".into()));
+                    return Err(ConversationStoreError::InvalidReference(
+                        "auxiliary retry changed its frozen model binding".into(),
+                    ));
                 }
             }
-            let invocation_json = serde_json::to_string(&start.invocation)
-                .map_err(|error| storage(format!("encode auxiliary invocation identity: {error}")))?;
+            let invocation_json = serde_json::to_string(&start.invocation).map_err(|error| {
+                storage(format!("encode auxiliary invocation identity: {error}"))
+            })?;
             let event = RuntimeEventEnvelope {
                 tool_occurrence: None,
                 observation: None,

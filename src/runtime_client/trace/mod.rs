@@ -59,7 +59,8 @@ mod lifecycle;
 #[cfg(test)]
 mod oracle_summary;
 pub use inspection::{
-    TraceInspectionCompactionCall, TraceInspectionCompactionCalls, TraceInspectionContent, TraceInspectionHead, TraceInspectionMessage, TraceInspectionMessages,
+    TraceInspectionCompactionCall, TraceInspectionCompactionCalls, TraceInspectionContent,
+    TraceInspectionHead, TraceInspectionMessage, TraceInspectionMessages,
     TraceToolDefinitionSelection,
 };
 mod live;

@@ -10,7 +10,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Trajectory } from '../src/app/trajectory/Trajectory';
 import { prependTrace, beginTraceDetail, completeTraceDetail, refreshTrace, replaceTrace, selectTrace, type TraceCache } from '../src/client/trace';
-import { ledgerFocusTargets, ledgerRows, matchedRecordIds, isInspectable, projectTrajectory, trajectoryItems as flattenTrajectory, visibleItems, matchingCalls, preferredItem, systemPresentation, type InspectableDisplayItem, type TurnStructure } from '../src/app/trajectory/layout';
+import { ledgerFocusTargets, ledgerRows, matchedRecordIds, isInspectable, projectTrajectory, recordLabel, trajectoryItems as flattenTrajectory, visibleItems, matchingCalls, preferredItem, systemPresentation, type InspectableDisplayItem, type TurnStructure } from '../src/app/trajectory/layout';
 import { searchItems } from '../src/app/trajectory/search';
 import { stepLessRecords, manyStepRecords, orderedStepRecords, structuralSearchRecords, requestDetail, toolDetail, traceRecord, traceTool } from './trace-fixture';
 import type { TraceContextPresentation, TraceDetail, TraceRecord } from '../../protocol/app-server/v74';
@@ -352,6 +352,17 @@ it.each(['en', 'zh'] as const)('non-committed compaction outcomes do not claim a
     expect(item.label).not.toBe(tx('trajectory:compacted'));
     expect(recordText(tx, record)).toBe(item.label);
   }
+});
+
+it.each(['ready', 'superseded', 'no_effect'] as const)('compaction Inspector preserves the native %s state shown in the ledger', phase => {
+  const ready = phase === 'ready';
+  const record = traceRecord(21, { kind: 'compaction', request: null, has_detail: false, state: ready ? 'running' : 'completed',
+    compaction: { mode: 'proactive', status: { operation_id: 'op', admission_generation: '1', triggering_attempt_id: null,
+      waiting_attempt_id: null, phase, accepted_fragments: 1, diagnostic: null }, outcome: ready ? null : phase } });
+  show(cacheOf([record]));
+  fireEvent.click(row('RecordRow', record.id));
+  const status = within(screen.getByRole('tabpanel')).getByText('Status').nextElementSibling;
+  expect(status?.textContent).toBe(recordLabel(translator('en'), record));
 });
 
 it('T1-09 search reveals both collapsed kinds without any detail/history reads', () => {

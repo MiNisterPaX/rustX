@@ -8,16 +8,16 @@ import css from './ContextSeat.module.css';
 
 /** Request evidence never substitutes for an authoritative native lifecycle. */
 export function compactionPresentation(context?: RuntimeClientContextView, request?: CompactionRequestEvidence) {
+  // A later operation cannot settle or conceal this exact manual request.
+  if (request?.status === 'skipped') return { state: 'skipped' as const };
+  if (request?.status === 'cancelled') return { state: 'cancelled' as const };
+  if (request?.status === 'failed') return { state: 'failed' as const, diagnostic: request.diagnostic };
+  if (request?.status === 'succeeded') return { state: 'succeeded' as const };
   if (context?.compaction_in_progress) return { state: 'running' as const };
   if (request?.status === 'submitting') return { state: 'submitting' as const };
   if (request?.status === 'uncertain') return { state: 'uncertain' as const };
-  if (request?.status === 'skipped') return { state: 'skipped' as const };
-  if (request?.status === 'cancelled') return { state: 'cancelled' as const };
-  const newerCommit = !!request && (context?.compaction_count ?? 0) > request.baselineCount;
-  if (request?.status === 'succeeded' && !newerCommit) return { state: 'succeeded' as const };
-  if (request?.status === 'failed' && !newerCommit) return { state: 'failed' as const, diagnostic: request.diagnostic };
   if (context?.compaction_error) return { state: 'failed' as const, diagnostic: context.compaction_error };
-  if (request?.status === 'succeeded' || context?.latest_compaction) return { state: 'succeeded' as const };
+  if (context?.latest_compaction) return { state: 'succeeded' as const };
   return undefined;
 }
 

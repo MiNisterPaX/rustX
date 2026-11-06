@@ -214,7 +214,7 @@ fn valid_digest(digest: &str) -> bool {
 
 /// Process-local generation proof. It is never deserialized from a checkpoint
 /// or accepted from an external caller; a native generator seals it only from
-/// an accepted complete ChunkPlan witness and its exact source/output values.
+/// an accepted complete `ChunkPlan` witness and its exact source/output values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedPrefixCoverage {
     record: PrefixCoverage,
@@ -332,8 +332,6 @@ fn summary_digest(
     summary: &DerivedModelMessage,
     generation: Option<&SummaryGenerationRef>,
 ) -> Result<String, ContextError> {
-    let mut hash = Sha256::new();
-    let mut remaining = 8 * 1024 * 1024_usize;
     struct Writer<'a>(&'a mut Sha256, &'a mut usize);
     impl std::io::Write for Writer<'_> {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -348,6 +346,8 @@ fn summary_digest(
             Ok(())
         }
     }
+    let mut hash = Sha256::new();
+    let mut remaining = 8 * 1024 * 1024_usize;
     serde_json::to_writer(
         Writer(&mut hash, &mut remaining),
         &("rustx-summary-output-v1", summary, generation),
@@ -433,14 +433,6 @@ pub(crate) fn capture_digest(
     input: &SelectedModelInput,
     count: usize,
 ) -> Result<String, ContextError> {
-    let limit = super::resources::ResourceLimits::default();
-    if count == 0 || count > limit.total_items || count > input.len() {
-        return Err(ContextError::new(
-            ContextErrorKind::CannotFit,
-            "captured prefix item count exceeds its source or resource bounds",
-        ));
-    }
-    let prefix = input.range(0..count);
     struct DigestBudget<'a> {
         digest: &'a mut Sha256,
         remaining: usize,
@@ -458,6 +450,14 @@ pub(crate) fn capture_digest(
             Ok(())
         }
     }
+    let limit = super::resources::ResourceLimits::default();
+    if count == 0 || count > limit.total_items || count > input.len() {
+        return Err(ContextError::new(
+            ContextErrorKind::CannotFit,
+            "captured prefix item count exceeds its source or resource bounds",
+        ));
+    }
+    let prefix = input.range(0..count);
     let mut hash = Sha256::new();
     serde_json::to_writer(
         DigestBudget {
@@ -488,6 +488,9 @@ mod tests {
     use crate::runtime::identity::CheckpointId;
     use crate::runtime::identity::{AuxiliaryCallId, MessageId};
 
+    const CONVERSATION_ONE: &str = "conv_019a0000-0000-7000-8000-000000000001";
+    const CONVERSATION_OTHER: &str = "conv_019a0000-0000-7000-8000-000000000002";
+
     fn genesis(scope: &str, frontier: u64) -> PrefixCoverage {
         let conversation_id = ConversationId::new(scope);
         PrefixCoverage {
@@ -511,12 +514,12 @@ mod tests {
 
     #[test]
     fn compares_only_equal_roots_and_checks_bounded_scope() {
-        let earlier = genesis("one", 2);
-        let later = genesis("one", 3);
+        let earlier = genesis(CONVERSATION_ONE, 2);
+        let later = genesis(CONVERSATION_ONE, 3);
         assert_eq!(earlier.compare(&later), Some(Ordering::Less));
         assert_eq!(later.compare(&earlier), Some(Ordering::Greater));
         assert_eq!(earlier.compare(&earlier), Some(Ordering::Equal));
-        assert_eq!(earlier.compare(&genesis("other", 99)), None);
+        assert_eq!(earlier.compare(&genesis(CONVERSATION_OTHER, 99)), None);
         assert!(earlier.validate_shape().is_ok());
         let mut invalid = earlier;
         invalid.captured_prefix_items = 0;
@@ -525,7 +528,7 @@ mod tests {
 
     #[test]
     fn derives_checked_frontiers_from_genesis_native_and_opaque_predecessors() {
-        let mut initial = genesis("one", 2);
+        let mut initial = genesis(CONVERSATION_ONE, 2);
         initial.captured_prefix_items = 2;
         let root = PrefixCoverage::from_capture(
             initial.capture_cut.clone(),
@@ -538,7 +541,7 @@ mod tests {
         .unwrap();
         assert_eq!(root, initial);
         let source = CheckpointSourceRef {
-            conversation_id: ConversationId::new("one"),
+            conversation_id: ConversationId::new(CONVERSATION_ONE),
             checkpoint_id: CheckpointId::new("checkpoint"),
             content_digest: "a".repeat(64),
         };
@@ -592,7 +595,7 @@ mod tests {
 
     #[test]
     fn sealed_proof_rejects_a_changed_capture_summary_or_generation() {
-        let cut = genesis("one", 1).capture_cut;
+        let cut = genesis(CONVERSATION_ONE, 1).capture_cut;
         let selected = input("frozen");
         let mut chunks =
             super::super::chunks::ChunkPlan::new_captured(&selected, &selected, 1, &cut).unwrap();
@@ -618,7 +621,7 @@ mod tests {
         };
         let generation = SummaryGenerationRef {
             conversation_id: cut.conversation_id.clone(),
-            call_id: AuxiliaryCallId::new("call"),
+            call_id: AuxiliaryCallId::new("aux_019a0000-0000-7000-8000-000000000001"),
             through_journal: cut.journal.0 + 1,
         };
         let proof = VerifiedPrefixCoverage::seal_parts(
@@ -668,7 +671,8 @@ mod tests {
             .is_err()
         );
         let mut another_generation = generation.clone();
-        another_generation.call_id = AuxiliaryCallId::new("other");
+        another_generation.call_id =
+            AuxiliaryCallId::new("aux_019a0000-0000-7000-8000-000000000002");
         assert!(!proof.authorizes(proof.record(), &summary, Some(&another_generation)));
         if let ProjectedMessage::User { content, .. } = &mut summary.message
             && let UserContentBlock::Text(text) = &mut content[0]

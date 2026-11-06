@@ -196,7 +196,10 @@ function foldOrdinaryEvent(state: Snapshot, event: Exclude<Event, {type: 'projec
     case 'goal_changed': return { ...state, goal: event.view };
     case 'workflows_updated': return { ...state, workflows: event.workflows };
     case 'attempt_started': return { ...state, attempt: { attempt_id: event.attempt_id, attempt_id_source: null, phase: { type: 'running' }, turn: 0, model: event.model, execution_settings: event.execution_settings, last_usage: undefined, in_flight: undefined, foreground: [] } };
-    case 'attempt_settled': return { ...withAttempt({ phase: { type: 'settled', outcome: event.outcome } }), context: { ...state.context!, compaction_in_progress: false } };
+    case 'attempt_settled': {
+      if (attempt?.attempt_id == null || attempt.attempt_id !== event.attempt_id) return state;
+      return { ...withAttempt({ phase: { type: 'settled', outcome: event.outcome } }), context: { ...state.context!, compaction_in_progress: false, compaction_progress: undefined } };
+    }
     case 'attempt_turn_updated': return withAttempt({ turn: event.turn });
     case 'attempt_usage_updated': return withAttempt({ last_usage: event.usage });
     case 'assistant_message_started':

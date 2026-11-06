@@ -487,13 +487,23 @@ pub(super) fn request_audit_at_tx(
     };
     validate_request_start_input(&start_input)?;
     if request.ordinal > 0 {
-        let first = request_row_query(connection, "call_id=?1 AND ordinal=0", [request.call_id.as_str()])?
-            .ok_or_else(|| ConversationStoreError::InvalidReference("auxiliary retry lacks its original request identity".into()))?;
+        let first = request_row_query(
+            connection,
+            "call_id=?1 AND ordinal=0",
+            [request.call_id.as_str()],
+        )?
+        .ok_or_else(|| {
+            ConversationStoreError::InvalidReference(
+                "auxiliary retry lacks its original request identity".into(),
+            )
+        })?;
         if first.started_sequence >= request.started_sequence
             || first.model != request.model
             || first.invocation != request.invocation
         {
-            return Err(ConversationStoreError::InvalidReference("auxiliary retry changed its frozen model binding".into()));
+            return Err(ConversationStoreError::InvalidReference(
+                "auxiliary retry changed its frozen model binding".into(),
+            ));
         }
     }
     if start.conversation_id != *conversation_id || !request_start_matches(&start, &start_input) {

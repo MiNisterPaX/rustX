@@ -86,11 +86,22 @@ without reclaiming physically held permits. Drain, deletion, authoritative
 durability failure and native cancellation retain physical join ownership.
 An already granted commit remains committed after cancellation.
 
+`ConversationRuntime::cancel_compaction(OperationId)` targets only the matching
+independent operation. An accepted cancellation request does not claim physical
+settlement or revoke an earlier commit grant. Unknown and settled identities
+cannot cancel a current Attempt or its blocking/manual competitor.
+
 Automatic Session configuration commits retain the existing foreground
 boundary. A prepared generation may commit between Attempts while an
 independent Summary keeps its original resources. Idle installation validates
 against the newly committed generation. Residency still sees active background
 work, and drain waits for its real cleanup.
+
+Physical join releases the generation's lifecycle admission. A retained Ready
+result can then participate in ordinary idle residency; it does not pin the
+Runtime in memory. An idle-claimed drain settles that operation and publishes
+its terminal status before reporting quiescence. This uses Runtime lifecycle
+authority and introduces no result-age policy.
 
 ## Native observations and restart
 
@@ -100,6 +111,21 @@ phase are separate bounded facts. Ready is distinct from committed. Only an
 actual committed checkpoint creates the durable summary marker; chunks and
 superseded results do not. Late callbacks cannot complete or clear another
 operation's progress.
+
+Foreground progress retains its native manual, primary-admission or actual
+overflow mode across accepted chunks. The Trace owner joins every terminal and
+status fact by exact OperationId at its Journal cut; concurrent operations cannot
+inherit one another's completion. Typed outcomes distinguish generated readiness,
+commit, cancellation, failure, supersession and no effect. Only the actual atomic
+completion proves a committed checkpoint.
+
+Inspection pages select that operation's real Calls through the bounded native
+operation index and page physical requests at the same cut. Each request carries
+the actual frozen ProviderId, logical ModelRef and selected Profile alongside its
+wire model. These identities originate in Auxiliary execution and survive later
+Session changes. Fingerprints and current configuration are not substitutes for
+historical source evidence. Format strategy, predecessor linkage, usage and
+uncertainty remain the existing native audit facts.
 
 Runtime Client retains at most two operation records and operation-matched
 foreground progress. Indexed frozen-cut reads recover historical observations
@@ -113,3 +139,6 @@ App Server v74, Runtime Client 85 and SQLite 87 carry the new contract. Child
 IPC remains 38 because its control/activity messages do not carry these DTOs.
 Web and TUI consume the same native facts; presentation owns no policy,
 retry decision or installation permission.
+
+The [verification record](asynchronous-compaction-validation.md) maps these
+contracts to their owning tests and describes the controlled measurements.

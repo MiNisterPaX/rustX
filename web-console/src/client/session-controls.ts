@@ -131,7 +131,7 @@ export class SessionControls {
     const target = attachment.target, generation = this.port.state().generation;
     const pending = this.compactionRequests.get(id);
     if (pending?.generation === generation && sameTarget(pending.target, target)) return false;
-    const operation: CompactionRequestEvidence = { baselineCount: this.port.state().views[id]?.snapshot?.context?.compaction_count ?? 0, generation, requestId: crypto.randomUUID(), authorityId: this.port.state().authorityId, target, status: 'submitting' };
+    const operation: CompactionRequestEvidence = { generation, requestId: crypto.randomUUID(), authorityId: this.port.state().authorityId, target, status: 'submitting' };
     this.compactionRequests.set(id, operation);
     this.port.setSession(id, { compactionRequest: operation });
     consume();
@@ -201,8 +201,6 @@ export class SessionControls {
     if (request) {
       if (request.authorityId !== this.port.state().authorityId || (request.generation === this.port.state().generation && !sameTarget(request.target, target)) || request.target.conversation_id !== target?.conversation_id
         || request.target.runtime_incarnation !== target?.runtime_incarnation) {
-        this.port.setSession(id, { compactionRequest: undefined });
-      } else if (snapshot.context?.compaction_in_progress && ['succeeded', 'skipped', 'cancelled', 'failed'].includes(request.status)) {
         this.port.setSession(id, { compactionRequest: undefined });
       } else {
         const evidence = snapshot.context?.manual_compaction;

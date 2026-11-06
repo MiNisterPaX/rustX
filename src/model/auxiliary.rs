@@ -304,7 +304,11 @@ impl AuxiliaryInvocationIdentity {
             || model.len() > 512
             || model.chars().any(char::is_control)
             || crate::model::catalog::ModelRef::parse(model).is_err()
-            || self.profile.as_ref().is_some_and(|profile| profile.as_str().len() > 128 || profile.as_str().chars().any(char::is_control) || crate::model::catalog::ModelProfileId::parse(profile.as_str()).is_err())
+            || self.profile.as_ref().is_some_and(|profile| {
+                profile.as_str().len() > 128
+                    || profile.as_str().chars().any(char::is_control)
+                    || crate::model::catalog::ModelProfileId::parse(profile.as_str()).is_err()
+            })
         {
             return Err("invalid bounded auxiliary invocation identity");
         }

@@ -1,6 +1,8 @@
 //! Durable asynchronous compaction facts published without manual/Attempt ownership.
 
-use super::*;
+use super::RuntimeInner;
+use crate::context::ContextError;
+use crate::events::types::RuntimeEvent;
 
 /// Reconcile only bounded indexed native operation statuses after the prior
 /// process has lost ownership. No Summary worker or request is reconstructed.

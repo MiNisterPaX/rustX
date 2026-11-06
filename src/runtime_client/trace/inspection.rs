@@ -24,7 +24,9 @@ pub struct TraceInspectionHead {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TraceInspectionContent {
     Lifecycle,
-    Compaction { page: TraceInspectionCompactionCalls },
+    Compaction {
+        page: TraceInspectionCompactionCalls,
+    },
     Tool {
         definition: TraceToolDefinitionSelection,
     },
@@ -172,11 +174,15 @@ impl super::TraceProjection<'_> {
                     page: self.inspection_messages(anchor.sequence, 0, 8)?,
                 }
             }
-            TraceFactData::CompactionStart { native_id: Some(_), .. } => TraceInspectionContent::Compaction {
+            TraceFactData::CompactionStart {
+                native_id: Some(_), ..
+            } => TraceInspectionContent::Compaction {
                 page: self.inspection_compaction_calls(anchor.sequence, 0, 4)?,
             },
-            TraceFactData::CompactionStart { native_id: None, .. } => TraceInspectionContent::Lifecycle,
-            TraceFactData::AttemptStart
+            TraceFactData::CompactionStart {
+                native_id: None, ..
+            }
+            | TraceFactData::AttemptStart
             | TraceFactData::StepStart
             | TraceFactData::BackgroundStart { .. }
             | TraceFactData::SubagentStart { .. }
@@ -206,9 +212,10 @@ impl super::TraceProjection<'_> {
     ) -> Result<crate::runtime::identity::CompactionOperationId, ConversationStoreError> {
         let anchor = self.inspection_anchor(sequence)?;
         match anchor.fact {
-            TraceFactData::CompactionStart { native_id: Some(id), .. } => {
-                Ok(crate::runtime::identity::CompactionOperationId::new(id))
-            }
+            TraceFactData::CompactionStart {
+                native_id: Some(id),
+                ..
+            } => Ok(crate::runtime::identity::CompactionOperationId::new(id)),
             _ => Err(ConversationStoreError::InvalidReference(
                 "Trace anchor has no bounded Compaction identity".into(),
             )),
@@ -224,25 +231,51 @@ impl super::TraceProjection<'_> {
         let operation = self.compaction_operation(sequence)?;
         let cut = self.cut()?;
         let source = self.store.observation_compaction_call_ids(
-            cut, &operation, (offset > 0).then_some(offset), limit.min(8),
+            cut,
+            &operation,
+            (offset > 0).then_some(offset),
+            limit.min(8),
         )?;
-        let audit_cut = crate::model::auxiliary::AuxiliaryAuditCut { journal: cut.read.journal };
+        let audit_cut = crate::model::auxiliary::AuxiliaryAuditCut {
+            journal: cut.read.journal,
+        };
         let mut items = Vec::with_capacity(source.items.len());
         for (started_sequence, call_id) in source.items {
-            let call = self.store.load_auxiliary_call(&call_id, audit_cut)?
+            let call = self
+                .store
+                .load_auxiliary_call(&call_id, audit_cut)?
                 .filter(|call| call.started_sequence == started_sequence)
-                .ok_or_else(|| ConversationStoreError::InvalidReference("Compaction Call audit missing at cut".into()))?;
+                .ok_or_else(|| {
+                    ConversationStoreError::InvalidReference(
+                        "Compaction Call audit missing at cut".into(),
+                    )
+                })?;
             let preceding_call = match call.business_source {
-                crate::model::auxiliary::AuxiliaryBusinessSource::Compaction { operation_id, preceding_call } if operation_id == operation => preceding_call,
-                _ => return Err(ConversationStoreError::InvalidReference("foreign Compaction Call".into())),
+                crate::model::auxiliary::AuxiliaryBusinessSource::Compaction {
+                    operation_id,
+                    preceding_call,
+                } if operation_id == operation => preceding_call,
+                _ => {
+                    return Err(ConversationStoreError::InvalidReference(
+                        "foreign Compaction Call".into(),
+                    ));
+                }
             };
             let (previous_summary, strategy) = match call.input {
-                crate::model::auxiliary::AuxiliaryInputEvidence::Compaction { previous_summary, output_strategy, .. } => (previous_summary, Some(output_strategy)),
+                crate::model::auxiliary::AuxiliaryInputEvidence::Compaction {
+                    previous_summary,
+                    output_strategy,
+                    ..
+                } => (previous_summary, Some(output_strategy)),
                 _ => (None, None),
             };
-            let requests = self.store.read_auxiliary_call_requests(&call_id, audit_cut, None, 3)?;
+            let requests = self
+                .store
+                .read_auxiliary_call_requests(&call_id, audit_cut, None, 3)?;
             items.push(TraceInspectionCompactionCall {
-                requests_domain: format!("trace.records.{sequence}.detail.calls.{call_id}.requests"),
+                requests_domain: format!(
+                    "trace.records.{sequence}.detail.calls.{call_id}.requests"
+                ),
                 request_count: requests.len() as u64,
                 call_id,
                 started_sequence,
@@ -267,13 +300,23 @@ impl super::TraceProjection<'_> {
         call_id: &crate::runtime::identity::AuxiliaryCallId,
     ) -> Result<Vec<crate::model::auxiliary::AuxiliaryRequestAudit>, ConversationStoreError> {
         let operation = self.compaction_operation(sequence)?;
-        let audit_cut = crate::model::auxiliary::AuxiliaryAuditCut { journal: self.cut()?.read.journal };
-        let call = self.store.load_auxiliary_call(call_id, audit_cut)?
-            .ok_or_else(|| ConversationStoreError::InvalidReference("Compaction Call is absent at cut".into()))?;
-        if !matches!(call.business_source, crate::model::auxiliary::AuxiliaryBusinessSource::Compaction { operation_id, .. } if operation_id == operation) {
-            return Err(ConversationStoreError::InvalidReference("foreign Compaction request Call".into()));
+        let audit_cut = crate::model::auxiliary::AuxiliaryAuditCut {
+            journal: self.cut()?.read.journal,
+        };
+        let call = self
+            .store
+            .load_auxiliary_call(call_id, audit_cut)?
+            .ok_or_else(|| {
+                ConversationStoreError::InvalidReference("Compaction Call is absent at cut".into())
+            })?;
+        if !matches!(call.business_source, crate::model::auxiliary::AuxiliaryBusinessSource::Compaction { operation_id, .. } if operation_id == operation)
+        {
+            return Err(ConversationStoreError::InvalidReference(
+                "foreign Compaction request Call".into(),
+            ));
         }
-        self.store.read_auxiliary_call_requests(call_id, audit_cut, None, 3)
+        self.store
+            .read_auxiliary_call_requests(call_id, audit_cut, None, 3)
     }
 
     pub(crate) fn inspection_messages(

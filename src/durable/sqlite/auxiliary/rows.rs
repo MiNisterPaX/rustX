@@ -127,7 +127,12 @@ pub(super) fn request_row_query<P: rusqlite::Params>(
                 })?,
                 request_id: RequestId::new(request_id),
                 model,
-                invocation: decode(&invocation.ok_or_else(|| storage("auxiliary invocation identity exceeds its bound"))?, "auxiliary invocation identity")?,
+                invocation: decode(
+                    &invocation.ok_or_else(|| {
+                        storage("auxiliary invocation identity exceeds its bound")
+                    })?,
+                    "auxiliary invocation identity",
+                )?,
                 started_sequence: sequence_from_i64(started_sequence)?,
                 terminal_sequence: terminal_sequence.map(sequence_from_i64).transpose()?,
                 terminal_kind: terminal_kind
