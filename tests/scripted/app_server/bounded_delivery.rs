@@ -34,7 +34,7 @@ async fn granted_connection(
             .await
         });
         let offered = format!(
-            "rustx.app-server.v74, rustx-token.{}, rustx-delivery-access.{DELIVERY_SECRET}",
+            "rustx.app-server.v75, rustx-token.{}, rustx-delivery-access.{DELIVERY_SECRET}",
             driver::TOKEN
         );
         (driver::websocket_offering(&url, &offered).await, server)

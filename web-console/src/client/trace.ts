@@ -1,7 +1,7 @@
 export {traceInspectionHead} from '../../../protocol/app-server/trace-inspection';
 import {traceInspectionHead} from '../../../protocol/app-server/trace-inspection';
 import type {TraceValueSelector} from '../../../protocol/app-server/trace-field';
-import type { TraceDetail, TracePage, TraceRecord, TraceLifecycle,CheckpointReadCut,CheckpointPage,CheckpointValueChunk,ContentRef,ContentChunk, Request1 } from '../../../protocol/app-server/v74';
+import type { TraceDetail, TracePage, TraceRecord, TraceLifecycle,CheckpointReadCut,CheckpointPage,CheckpointValueChunk,ContentRef,ContentChunk, Request1 } from '../../../protocol/app-server/v75';
 
 /** Records requested per older page. */
 export const TRACE_PAGE_SIZE = 32;
@@ -30,8 +30,8 @@ export interface TraceDetailEntry {
   /** One in-flight read; lifecycle refreshes may mark its result stale without cancelling it. */
   readonly read?: object;
   readonly stale?: boolean;
-  readonly content?:import('../../../protocol/app-server/v74').ContentBinding[];
-  readonly readContent?:(ref:import('../../../protocol/app-server/v74').ContentRef,offset:number,current:()=>boolean)=>Promise<import('../../../protocol/app-server/v74').ContentChunk>;
+  readonly content?:import('../../../protocol/app-server/v75').ContentBinding[];
+  readonly readContent?:(ref:import('../../../protocol/app-server/v75').ContentRef,offset:number,current:()=>boolean)=>Promise<import('../../../protocol/app-server/v75').ContentChunk>;
   /** A positive finite descriptor is not a complete TraceDetail. */
   readonly page?: CheckpointPage;
   readonly reader?: TraceFieldReader;
@@ -50,9 +50,19 @@ export interface TraceDetailEntry {
  * the interval it described no longer applies.
  */
 export interface TraceFieldReader {
+ readonly scope?:string;
  value(cut:CheckpointReadCut,field:TraceValueSelector,offset:number,current:()=>boolean):Promise<CheckpointValueChunk>;
  content(cut:CheckpointReadCut,reference:ContentRef,offset:number,current:()=>boolean):Promise<ContentChunk>;
  page(cut:CheckpointReadCut,domain:string,offset:number,current:()=>boolean):Promise<CheckpointPage>;
+}
+const readerScopes = new WeakMap<TraceFieldReader, string>();
+let nextReaderScope = 0n;
+/** Cache ownership only; native read authorization remains with the reader. */
+export function traceReaderScope(reader: TraceFieldReader): string {
+ if (reader.scope) return reader.scope;
+ let scope = readerScopes.get(reader);
+ if (!scope) { scope = `reader:${++nextReaderScope}`; readerScopes.set(reader, scope); }
+ return scope;
 }
 export interface TraceCache {
   /** A native tool landing retains its historical interval until explicitly released. */
@@ -132,6 +142,7 @@ export function bindTraceDetailReader(reader:TraceFieldReader,page:CheckpointPag
   if(!current()||!owned()||JSON.stringify(cut)!==JSON.stringify(page.read_cut))throw new Error('Original Trace detail view was replaced.');
  };
  return {
+  scope:traceReaderScope(reader),
   value:async(cut,field,offset,owned)=>{valid(cut,owned);const chunk=await reader.value(cut,field,offset,()=>current()&&owned());valid(cut,owned);return chunk;},
   page:async(cut,domain,offset,owned)=>{valid(cut,owned);const result=await reader.page(cut,domain,offset,()=>current()&&owned());valid(cut,owned);return result;},
   content:async(cut,ref,offset,owned)=>{valid(cut,owned);const chunk=await reader.content(cut,ref,offset,()=>current()&&owned());valid(cut,owned);return chunk;},

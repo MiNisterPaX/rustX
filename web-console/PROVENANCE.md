@@ -540,7 +540,7 @@ sidebar still predated main's Workflows entry; dialog geometry is unchanged.
 The branch also merges main at `d730966ce54ba330529bffb0279d6e0c4a44fd17`
 (PR #494). Native temporary questions and classification retain their execution,
 publication and cancellation owners. The combined vocabulary is App Server v54,
-Runtime Client v74, SQLite v77 and archive v10; request inspection retains schema 5
+Runtime Client v75, SQLite v77 and archive v10; request inspection retains schema 5
 without declared reasoning metadata. Generated artifacts contain both workspace
 change inspection and auxiliary delivery. The existing simplified header, Fork
 presentation, model editor and right-sidebar interactions are preserved.
@@ -5302,3 +5302,22 @@ Explicit Model-dialog Cancel discards the whole unsaved Model unit through its
 existing transaction actor, including Profile membership and reasoning order.
 Close and navigation retain that draft for later editing; no transaction state
 or native configuration action is added.
+
+## Compaction presentation
+
+The compaction-specific reference is Harness
+`fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159`. The source inventory records the
+verified CompactionItem, command-card, stylesheet, ContextMeter, Trajectory and
+regular icon artwork references. Other inventory baselines remain unchanged.
+`CompactionIcon` adapts only three regular SVG glyphs. The marker preserves
+reference grouping, disclosure, spacing, sticky header and hover-capability
+rules while native operation, receipt, activation and read-cut facts retain
+all lifecycle and installation authority.
+
+The Inspector adds native bounded Call/physical-request metadata and its exact
+committed checkpoint header through App Server v75 / Runtime Client v86.
+No intermediate summary, trusted input or reasoning text becomes a Chat
+summary. [The reference map, hashes, visual evidence and validation](../docs/compaction-presentation/README.md)
+describe the adapters and necessary native differences, including separate
+primary occupancy and Auxiliary usage. Web notices retain the DeepSeek MIT
+notice; the terminal adaptation carries Pi's separate notice in `tui`.

@@ -8048,7 +8048,7 @@ invented wire ID. Nullable `wire_id` distinguishes absence from explicit correla
 transmitted stored results use actual accepted native IDs. Stateless/full replay IDs
 match the adapter's relevant wire segment, independent of covered historical occurrences.
 Ambiguous duplicate unresolved wire IDs are rejected before detached wire mutation.
-This required observation change is carried by App Server v50 and Runtime Client v74.
+This required observation change is carried by App Server v50 and Runtime Client v75.
 
 ## PR #477 bounded activation header integrity
 
@@ -8376,7 +8376,7 @@ See [the storage and lifecycle contract](issue-520/README.md).
   document. Graph/node/depth, editor, value, context and decoder safeguards
   remain independent; source admission does not promise arbitrary execution
   payload or model-context capacity.
-- Workflow file data crosses v74 control records through native-owned document
+- Workflow file data crosses v75 control records through native-owned document
   scratch and 65,536-byte chunks. A ready scratch document is neither a partial
   source file nor a source commit. Only the existing revision-fenced source
   transaction publishes the complete canonical file with one atomic replacement.

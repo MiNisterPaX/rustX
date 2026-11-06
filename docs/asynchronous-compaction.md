@@ -135,7 +135,7 @@ interruption without asserting that unresolved provider work never executed.
 Primary occupancy and separately attributed Auxiliary usage retain their
 measurement provenance; absent usage is unknown.
 
-App Server v74, Runtime Client 85 and SQLite 87 carry the new contract. Child
+App Server v75, Runtime Client 85 and SQLite 87 carry the new contract. Child
 IPC remains 38 because its control/activity messages do not carry these DTOs.
 Web and TUI consume the same native facts; presentation owns no policy,
 retry decision or installation permission.

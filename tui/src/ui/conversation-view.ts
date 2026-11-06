@@ -1,5 +1,5 @@
 import { Container, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
-import type { CollectionFrontier } from "../../../protocol/app-server/v74.ts";
+import type { CollectionFrontier } from "../../../protocol/app-server/v75.ts";
 import type { PresentationState } from "../presentation/state.ts";
 import { correlateTools } from "../presentation/tools.ts";
 import { selectTodos } from "../presentation/todos.ts";
@@ -12,7 +12,7 @@ import {
   renderSubagentSection,
 } from "./components/activity.ts";
 import { renderResourceBanner } from "./components/resources.ts";
-import { renderStartup, startupVisible, workingStatus } from "./components/status.ts";
+import { compactionNotice, renderStartup, startupVisible, workingStatus } from "./components/status.ts";
 import { renderTodoPanel, deferredTodoRecords } from "./components/todos.ts";
 import { renderTranscript } from "./components/transcript.ts";
 import { banded } from "./components/transcript-block.ts";
@@ -21,6 +21,7 @@ import { style } from "./theme.ts";
 
 /** Everything one total render reads besides the projection itself. */
 export interface ConversationRenderContext {
+  compactions?: readonly import('../protocol/app-server.ts').RuntimeClientProjectionHeadView[];
   preferences: PresentationPreferences;
   sessionInfo: SessionView | undefined;
   workspace: string | undefined;
@@ -110,7 +111,7 @@ export class ConversationView {
     }
 
     this.transcript.clear();
-    for (const block of renderTranscript(state, preferences, correlation)) {
+    for (const block of renderTranscript(state, preferences, correlation, context.compactions)) {
       this.transcript.addChild(banded(block));
       this.transcript.addChild(new Spacer(1));
     }
@@ -138,10 +139,12 @@ export class ConversationView {
     if (todos.length > 0) this.todos.addChild(new Text(todos, 1, 0));
 
     const working = workingStatus(state);
+    const notice = compactionNotice(state);
     if (working === undefined) {
       this.#loader.stop();
+      if (notice) this.activity.addChild(new Text(style.dim(notice), 1, 0));
     } else {
-      this.#loader.setMessage(working);
+      this.#loader.setMessage([working, notice].filter(Boolean).join(' · '));
       this.#loader.start();
       this.activity.addChild(this.#loader);
     }

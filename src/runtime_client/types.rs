@@ -288,7 +288,8 @@ use crate::runtime::interaction::{InteractionRef, InteractionResponse};
 /// metadata; selection ordinals and frozen invocation snapshots are unchanged.
 /// Version 84 adds accepted Summary fragment progress and distinct manual outcomes.
 /// Version 85 adds independent Compaction ownership and status observations.
-pub const RUNTIME_CLIENT_PROTOCOL_VERSION: u16 = 85;
+/// Version 86 adds the exact committed checkpoint to finite Compaction inspection.
+pub const RUNTIME_CLIENT_PROTOCOL_VERSION: u16 = 86;
 
 /// The external cursor of the Runtime Client observation stream.
 ///
@@ -1391,7 +1392,7 @@ mod tests {
     #[test]
     fn protocol_version_is_independent_from_event_schema_version() {
         let _ = EVENT_SCHEMA_VERSION;
-        assert_eq!(RUNTIME_CLIENT_PROTOCOL_VERSION, 85);
+        assert_eq!(RUNTIME_CLIENT_PROTOCOL_VERSION, 86);
         // Structural independence: no Runtime Client protocol type carries
         // a `schema_version` field, and serialized requests never embed it.
         let request = RuntimeClientRequest::Initialize {
