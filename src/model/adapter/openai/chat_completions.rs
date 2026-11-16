@@ -72,6 +72,7 @@ use crate::runtime::identity::ToolCallId;
 pub struct OpenAiChatCompletionsAdapter {
     client: Client<OpenAIConfig>,
     http_client: reqwest::Client,
+    local_tool_schema_refs: bool,
 }
 
 impl std::fmt::Debug for OpenAiChatCompletionsAdapter {
@@ -88,6 +89,7 @@ impl OpenAiChatCompletionsAdapter {
         let (api_key, api_base, http_client) = config.into_parts();
         let http_client = http_client.unwrap_or_default();
         Self {
+            local_tool_schema_refs: super::moonshot_schema::applies(&api_base),
             client: build_client(&api_key, &api_base, Some(http_client.clone())),
             http_client,
         }
@@ -107,10 +109,17 @@ impl ModelAdapter for OpenAiChatCompletionsAdapter {
             Ok(validated) => validated,
             Err(error) => return model_stream_of_failure(error),
         };
-        let translated = match translate_request(&request) {
+        let mut translated = match translate_request(&request) {
             Ok(translated) => translated,
             Err(error) => return model_stream_of_failure(error),
         };
+        if self.local_tool_schema_refs
+            && let Err(error) = super::moonshot_schema::project_tools(&mut translated)
+        {
+            return model_stream_of_failure(invalid_request(&format!(
+                "Moonshot tool schema projection failed: {error}"
+            )));
+        }
         let client = if let Some(limit) = request.response_byte_limit {
             self.client
                 .clone()

@@ -1,0 +1,93 @@
+[
+  {
+    "filter": "tools::schema::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 5284 filtered out; finished in 0.05s"
+    ]
+  },
+  {
+    "filter": "tools::executor::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 5291 filtered out; finished in 0.02s"
+    ]
+  },
+  {
+    "filter": "capabilities::tools::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 5304 filtered out; finished in 0.04s"
+    ]
+  },
+  {
+    "filter": "runtime::agent_profile::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 5297 filtered out; finished in 0.02s"
+    ]
+  },
+  {
+    "filter": "runtime::workflow::tests::tools::admission::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 5301 filtered out; finished in 0.14s"
+    ]
+  },
+  {
+    "filter": "runtime::workflow::tests::tools::composition::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 5300 filtered out; finished in 0.45s"
+    ]
+  },
+  {
+    "filter": "model::adapter::openai::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 5266 filtered out; finished in 0.11s"
+    ]
+  },
+  {
+    "filter": "model::adapter::anthropic::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 5286 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "filter": "tools::native::mutation::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5310 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "filter": "tools::native::support::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 5309 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "filter": "capabilities::coordinator::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 5289 filtered out; finished in 0.03s"
+    ]
+  },
+  {
+    "filter": "capabilities::selection::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 5300 filtered out; finished in 0.05s"
+    ]
+  },
+  {
+    "filter": "tools::environment::",
+    "exit_code": 0,
+    "summary": [
+      "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 5300 filtered out; finished in 0.02s"
+    ]
+  }
+]

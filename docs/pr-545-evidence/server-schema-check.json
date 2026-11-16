@@ -1,0 +1,102 @@
+{
+  "checked_at": "2026-11-16T17:04:02.313011+08:00",
+  "endpoint": "https://api.kimi.com/coding/v1/chat/completions",
+  "model": "kimi-for-coding",
+  "base_commit": "d82d7f9b8d9dd4f5064dba8d377103c8c6049d28",
+  "tool_names": [
+    "ask_user",
+    "read",
+    "read_image",
+    "present",
+    "write",
+    "edit",
+    "glob",
+    "grep",
+    "bash",
+    "job_list",
+    "job_status",
+    "job_wait",
+    "job_cancel",
+    "combustor_design",
+    "engine_definition",
+    "turbine_design"
+  ],
+  "original_sha256": "1d2bdc086c32f866fa38aef13b84f5cc9f9eec020b31328378820f4fc4cf00a9",
+  "accepted_sha256": "7723a06d865958da57824867ea561d32361a70a850c58bf8c90739e3c851f64b",
+  "accepted_allOf_count": 0,
+  "accepted_ref_count": 144,
+  "request_conditions": {
+    "tool_choice": "none",
+    "stream": "false except accepted_16_tools_stream",
+    "max_tokens": 128,
+    "prompt": "Reply with OK only. Do not call any tools."
+  },
+  "results": [
+    {
+      "case": "baseline_no_tools",
+      "status": 200,
+      "seconds": 10.37,
+      "finish_reasons": [
+        "stop"
+      ],
+      "replies": [
+        "OK"
+      ],
+      "tool_calls_returned": false,
+      "usage": {
+        "prompt_tokens": 97,
+        "completion_tokens": 69,
+        "total_tokens": 166,
+        "completion_tokens_details": {
+          "reasoning_tokens": 53
+        }
+      }
+    },
+    {
+      "case": "original_16_tools",
+      "status": 400,
+      "seconds": 0.3,
+      "error": "{\"error\":{\"message\":\"tools.function.parameters is not a valid moonshot flavored json schema, details: \\u003cAt path 'properties.arguments.$ref': references must start with #/$defs/\\u003e\",\"type\":\"invalid_request_error\"}}"
+    },
+    {
+      "case": "projected_16_tools",
+      "status": 400,
+      "seconds": 0.27,
+      "error": "{\"error\":{\"message\":\"tools.function.parameters is not a valid moonshot flavored json schema, details: \\u003cAt path 'properties.arguments': detected infinite recursion without termination condition\\u003e\",\"type\":\"invalid_request_error\"}}"
+    },
+    {
+      "case": "collapsed_16_tools",
+      "status": 200,
+      "seconds": 2.52,
+      "finish_reasons": [
+        "stop"
+      ],
+      "replies": [
+        "OK"
+      ],
+      "tool_calls_returned": false,
+      "usage": {
+        "prompt_tokens": 7055,
+        "completion_tokens": 31,
+        "total_tokens": 7086,
+        "completion_tokens_details": {
+          "reasoning_tokens": 15
+        }
+      }
+    },
+    {
+      "case": "accepted_16_tools_stream",
+      "status": 200,
+      "seconds": 12.18,
+      "finish_reasons": [
+        "stop"
+      ],
+      "replies": [
+        "OK"
+      ],
+      "tool_calls_returned": false,
+      "usage": null,
+      "stream": true
+    }
+  ]
+}

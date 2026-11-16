@@ -12,6 +12,7 @@ pub mod chat_completions;
 mod client;
 pub mod config;
 pub(crate) mod mapping;
+mod moonshot_schema;
 pub(crate) mod qwen_xml;
 pub mod responses;
 
