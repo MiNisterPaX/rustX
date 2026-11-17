@@ -19,16 +19,17 @@ pub(super) fn project_tools(request: &mut Value) -> Result<(), String> {
     let Some(tools) = request.get_mut("tools").and_then(Value::as_array_mut) else {
         return Ok(());
     };
-    for tool in tools {
+    for (index, tool) in tools.iter_mut().enumerate() {
         let Some(schema) = tool.pointer_mut("/function/parameters") else {
             continue;
         };
-        *schema = project(schema)?;
+        // Moonshot may resolve local definition names across the whole request.
+        *schema = project(schema, &format!("tool{index}"))?;
     }
     Ok(())
 }
 
-fn project(schema: &Value) -> Result<Value, String> {
+fn project(schema: &Value, namespace: &str) -> Result<Value, String> {
     let resource = Resource::from_contents(schema.clone()).map_err(|e| e.to_string())?;
     let draft = resource.draft();
     let uri = resource.id().unwrap_or("json-schema:///").to_owned();
@@ -37,6 +38,7 @@ fn project(schema: &Value) -> Result<Value, String> {
     let resolver = registry.try_resolver(&uri).map_err(|e| e.to_string())?;
     let root = resolver.lookup("").map_err(|e| e.to_string())?;
     let mut projector = Projector {
+        namespace,
         keys: HashMap::new(),
         defs: Map::new(),
     };
@@ -47,12 +49,13 @@ fn project(schema: &Value) -> Result<Value, String> {
     Ok(output)
 }
 
-struct Projector {
+struct Projector<'a> {
+    namespace: &'a str,
     keys: HashMap<(usize, String, Draft), String>,
     defs: Map<String, Value>,
 }
 
-impl Projector {
+impl Projector<'_> {
     fn node(
         &mut self,
         source: &Value,
@@ -100,7 +103,7 @@ impl Projector {
             let name = if let Some(name) = self.keys.get(&key) {
                 name.clone()
             } else {
-                let name = format!("schema{}", self.keys.len());
+                let name = format!("{}_schema{}", self.namespace, self.keys.len());
                 self.keys.insert(key, name.clone());
                 // Reserve before following references, including self-recursion.
                 self.defs.insert(name.clone(), json!({}));
@@ -174,6 +177,8 @@ impl Projector {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::runtime::identity::ToolId;
     use crate::tools::types::{ToolDefinition, ToolExecutionPolicy, ToolOrigin, ToolReplayPolicy};
@@ -198,7 +203,7 @@ mod tests {
             "path":{"type":"string"},"next":{"$ref":"#"},
             "literal":{"const":{"$ref":"unchanged"}}
         },"required":["path"],"additionalProperties":false}));
-        let projected = project(&original).unwrap();
+        let projected = project(&original, "test").unwrap();
         assert!(
             projected["properties"]["arguments"]["$ref"]
                 .as_str()
@@ -227,7 +232,7 @@ mod tests {
             "properties":{"value":{"$ref":"number"}},"required":["value"],
             "$defs":{"number":{"$id":"number","type":"integer","minimum":2}}
         }));
-        let projected = project(&original).unwrap();
+        let projected = project(&original, "test").unwrap();
         let validator = crate::tools::schema::build_validator(&projected).unwrap();
         assert!(
             validator.is_valid(&json!({"arguments":{"value":3},"execution_mode":"foreground"}))
@@ -245,16 +250,16 @@ mod tests {
             "allOf":[{"type":"object","properties":{"value":{"allOf":[{"$ref":"#/$defs/value"}]}},
                 "required":["value"],"additionalProperties":false}]
         });
-        let projected = project(&original).unwrap();
+        let projected = project(&original, "test").unwrap();
         assert_eq!(projected["type"], "object");
         assert_eq!(projected["required"], json!(["value"]));
         assert_eq!(projected["additionalProperties"], false);
         assert_eq!(
             projected["properties"]["value"],
-            json!({"$ref":"#/$defs/schema0"})
+            json!({"$ref":"#/$defs/test_schema0"})
         );
         assert_eq!(
-            projected["$defs"]["schema0"],
+            projected["$defs"]["test_schema0"],
             json!({"type":"integer","minimum":2})
         );
         let before = crate::tools::schema::build_validator(&original).unwrap();
@@ -283,7 +288,7 @@ mod tests {
             },
             "required":["constrained"],"additionalProperties":false
         });
-        let projected = project(&original).unwrap();
+        let projected = project(&original, "test").unwrap();
         assert_eq!(projected, original);
         let validator = crate::tools::schema::build_validator(&projected).unwrap();
         assert!(validator.is_valid(&json!({"constrained":3,"constant":literal,"choice":literal})));
@@ -301,7 +306,7 @@ mod tests {
         for (definition, _) in definitions {
             let model = crate::tools::compile_model_definition(&definition).unwrap();
             let original = model.input_schema.clone();
-            let projected = project(&model.input_schema)
+            let projected = project(&model.input_schema, "test")
                 .unwrap_or_else(|error| panic!("{}: {error}", model.name));
             assert_eq!(model.input_schema, original);
             crate::tools::schema::build_validator(&projected)
@@ -316,8 +321,105 @@ mod tests {
     }
 
     #[test]
+    fn tools_have_independent_definitions_and_argument_contracts_in_any_order() {
+        let definitions = [
+            (
+                "ask_user",
+                compile(json!({"type":"object","properties":{
+                    "questions":{"type":"array","items":{"type":"string"}}
+                },"required":["questions"],"additionalProperties":false})),
+                json!({"questions":["Which project?"]}),
+            ),
+            (
+                "read",
+                compile(
+                    json!({"type":"object","properties":{"path":{"type":"string"}},
+                    "required":["path"],"additionalProperties":false}),
+                ),
+                json!({"path":"README.md"}),
+            ),
+            (
+                "workflow",
+                compile(json!({"type":"object","properties":{
+                    "request":{"type":"string"},"project_dir":{"type":"string"}
+                },"required":["request","project_dir"],"additionalProperties":false})),
+                json!({"request":"Build the project","project_dir":"/tmp/project"}),
+            ),
+        ];
+        let originals: Vec<_> = definitions
+            .iter()
+            .map(|(_, schema, _)| schema.clone())
+            .collect();
+        for order in [[0, 1, 2], [1, 2, 0]] {
+            let mut request = json!({"tools":order.map(|index| {
+                let (name, schema, _) = &definitions[index];
+                json!({"type":"function","function":{"name":name,"parameters":schema}})
+            })});
+            project_tools(&mut request).unwrap();
+            let mut names = HashSet::new();
+            for (position, index) in order.into_iter().enumerate() {
+                let (name, original, _) = &definitions[index];
+                let function = &request["tools"][position]["function"];
+                assert_eq!(function["name"], *name);
+                let schema = &function["parameters"];
+                let defs = schema["$defs"].as_object().unwrap();
+                assert!(!defs.is_empty());
+                for key in defs.keys() {
+                    assert!(
+                        names.insert(key.clone()),
+                        "definition reused across tools: {key}"
+                    );
+                }
+                let draft = Resource::from_contents(schema.clone()).unwrap().draft();
+                assert!(assert_own_refs(schema, schema, defs, draft) > 0);
+                let before = crate::tools::schema::build_validator(original).unwrap();
+                let after = crate::tools::schema::build_validator(schema).unwrap();
+                for (argument_index, (_, _, arguments)) in definitions.iter().enumerate() {
+                    let envelope = json!({"arguments":arguments,"execution_mode":"foreground"});
+                    assert_eq!(
+                        before.is_valid(&envelope),
+                        argument_index == index,
+                        "{name}: {envelope}"
+                    );
+                    assert_eq!(
+                        after.is_valid(&envelope),
+                        argument_index == index,
+                        "{name}: {envelope}"
+                    );
+                }
+            }
+        }
+        for ((_, schema, _), original) in definitions.iter().zip(originals) {
+            assert_eq!(*schema, original);
+        }
+    }
+
+    fn assert_own_refs(
+        schema: &Value,
+        root: &Value,
+        defs: &Map<String, Value>,
+        inherited: Draft,
+    ) -> usize {
+        let draft = inherited.detect(schema).unwrap();
+        let mut count = 0;
+        if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+            let name = reference.strip_prefix("#/$defs/").unwrap();
+            assert!(
+                defs.contains_key(name),
+                "reference leaves tool definitions: {reference}"
+            );
+            assert_eq!(root.pointer(&reference[1..]), defs.get(name));
+            count += 1;
+        }
+        for child in draft.subresources_of(schema) {
+            count += assert_own_refs(child, root, defs, draft);
+        }
+        count
+    }
+
+    #[test]
     fn missing_resources_do_not_trigger_io() {
-        assert!(project(&json!({"type":"object","properties":{"bad":{"$ref":"http://127.0.0.1:1/not-fetched"}}})).is_err());
+        assert!(project(&json!({"type":"object","properties":{"bad":{"$ref":"http://127.0.0.1:1/not-fetched"}}}), "test").is_err());
     }
 
     #[test]

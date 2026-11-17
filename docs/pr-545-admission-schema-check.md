@@ -46,3 +46,15 @@ Existing adapter tests chiefly establish schema serialization fidelity. They do 
 The machine-readable server evidence records request conditions, schema hashes, HTTP responses and model usage without credentials or conversation messages.
 
 References: [Moonshot MFJS specification](https://github.com/MoonshotAI/walle/blob/main/docs/mfjs-spec.md), [official validator and validation levels](https://github.com/MoonshotAI/walle).
+
+## 2026-11-17: isolate definitions across tools
+
+The initial HTTP-acceptance check did not exercise tool argument generation. Real use revealed that each independently projected tool reused the same `schema0`, `schema1`, etc. definition names. With `ask_user` first, the current Kimi endpoint generated questionnaire arguments for `read`, `bash`, and workflow calls. Native business validation correctly rejected them before execution; the two inspected conversations contained 62 failed proposals and no workflow runs.
+
+Fresh requests isolated this behavior: two tools and the actual 17-tool catalog reproduced `read` with `questions`; putting `read` first produced `path`; keeping the original order and assigning each tool unique definition names also produced `path`. This establishes an endpoint-dependent cross-tool naming issue, not a local parameter substitution in the response parser.
+
+The projector now uses deterministic request-local tool ordinals: `tool0_schema0`, `tool1_schema0`, etc. Each function remains self-contained. Definitions and generated references use the same namespace, while original contracts and literal business data remain unchanged.
+
+The added regression projects questionnaire, read, and workflow tools together in two orders. It checks globally distinct definition keys, resolution within each tool, original-contract preservation, valid own arguments, and rejection of another tool's arguments. All 207 relevant regression tests pass, including eight projection tests.
+
+Live verification uses the patched production projection of all 17 tools: 151 definitions have 151 distinct names. Fresh streaming requests returned the expected `read.path`, `bash.command` with foreground selection, and workflow `request`/`project_dir`. These proposals were captured directly from the endpoint and were not executed. Earlier exploratory prompts that returned ordinary text without a tool proposal are inconclusive and are not counted as successful contract tests. See `pr-545-evidence/namespace-routing-check.json` and `namespace-regression-checks.json`.

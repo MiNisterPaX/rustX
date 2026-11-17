@@ -1,0 +1,53 @@
+{
+  "tested_at": "2026-11-17T11:03:58.353274+08:00",
+  "model": "kimi-for-coding",
+  "stream": true,
+  "tools_count": 17,
+  "definition_count": 151,
+  "distinct_definition_count": 151,
+  "no_tools_executed": true,
+  "results": [
+    {
+      "case": "real_read_stream",
+      "status": 200,
+      "tool_name": "read",
+      "business_keys": [
+        "path"
+      ],
+      "outer_keys": [
+        "arguments"
+      ],
+      "expected_values_matched": true,
+      "finish_reason": "tool_calls"
+    },
+    {
+      "case": "pwd_bash_stream",
+      "status": 200,
+      "tool_name": "bash",
+      "business_keys": [
+        "command",
+        "description"
+      ],
+      "outer_keys": [
+        "arguments",
+        "execution_mode"
+      ],
+      "expected_values_matched": true,
+      "finish_reason": "tool_calls"
+    },
+    {
+      "case": "real_workflow_stream",
+      "status": 200,
+      "tool_name": "compressor_design",
+      "business_keys": [
+        "request",
+        "project_dir"
+      ],
+      "outer_keys": [
+        "arguments"
+      ],
+      "expected_values_matched": true,
+      "finish_reason": "tool_calls"
+    }
+  ]
+}
