@@ -5009,7 +5009,7 @@
           "treatment": "Files tree, document toolbar and source viewer presentation adapted to the existing native Host and React tab lifetime."
         }
       ],
-      "local_sha256": "eb9272d012943b826202853e43f0075af7d1a3730590f91004801708113358fe"
+      "local_sha256": "9528ddcd503783d99bc980329548cd9bed8a30151e35f082a017807a459e9cd1"
     },
     {
       "upstream": "packages/client/ui-sidebar-files/src/client/FilesBody.module.css",

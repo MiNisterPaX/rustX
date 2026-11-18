@@ -9,9 +9,10 @@ import { startDogfood } from './dogfood-server';
 import { instrument, observeGeometryLatency, resources } from './geometry-observation';
 import { connectRemote, openEmptySession } from './shell-actions';
 
-interface Fixture { id: string; path: string; control?: boolean }
+interface Fixture { id: string; path: string; control?: boolean; variants?: string[] }
 interface Benchmark {
   builds: { baseline: string; lexer: string };
+  native?: { dist: string; executable: string };
   fixtures: Fixture[];
   output: string;
   executablePath?: string;
@@ -61,7 +62,7 @@ async function observeUploads(page: Page) {
       const original = WebGL2RenderingContext.prototype[name];
       Object.defineProperty(WebGL2RenderingContext.prototype, name, { value: function (this: WebGL2RenderingContext, ...args: unknown[]) {
         const canvas = this.canvas, data = args[name === 'bufferData' ? 1 : 2];
-        if (!(canvas instanceof HTMLCanvasElement) || !ArrayBuffer.isView(data) || !canvas.closest('[data-geometry-format="step"]'))
+        if (!(canvas instanceof HTMLCanvasElement) || !ArrayBuffer.isView(data) || !canvas.closest('[data-geometry-format]'))
           return Reflect.apply(original, this, args);
         const start = performance.now();
         const result = Reflect.apply(original, this, args);
@@ -79,7 +80,7 @@ async function observeUploads(page: Page) {
     }
     document.addEventListener('geometry-test-model-submitted', event => {
       const canvas = (event as CustomEvent).detail;
-      if (!(canvas instanceof HTMLCanvasElement) || !canvas.closest('[data-geometry-format="step"]') || frames.length >= 128) return;
+      if (!(canvas instanceof HTMLCanvasElement) || !canvas.closest('[data-geometry-format]') || frames.length >= 128) return;
       const upload = uploads.get(canvas);
       frames.push({ at: performance.now(), lod: canvas.dataset.geometryLod, calls: upload?.calls ?? 0,
         bytes: upload?.bytes ?? 0, cpuMs: upload?.cpuMs ?? 0, firstCallAt: upload?.firstCallAt ?? null });
@@ -89,11 +90,12 @@ async function observeUploads(page: Page) {
   });
 }
 
-async function sample(page: Page, name: string, bytes: number, warm: boolean, diagnostic: boolean) {
+async function sample(page: Page, name: string, bytes: number, warm: boolean, diagnostic: boolean, native: boolean) {
   const selector = `[data-files-path="${name}"] > button`;
   await observeGeometryLatency(page, selector, 'click');
   const previous = await page.evaluate(() => {
     performance.clearResourceTimings();
+    performance.clearMarks('geometry:native-step');
     performance.setResourceTimingBufferSize(2_000);
     for (const name of ['geometry:cad-code-compile', 'geometry:cad-code-wait', 'geometry:display-prepare:step']) performance.clearMeasures(name);
     const observation = window as any;
@@ -117,6 +119,9 @@ async function sample(page: Page, name: string, bytes: number, warm: boolean, di
     const close = sinceClick.find(entry => method(entry) === 'preview-close');
     const pages = sinceClick.filter(entry => method(entry) === 'preview-read');
     const wasm = sinceClick.filter(entry => method(entry)?.endsWith('.wasm'));
+    const conversion = sinceClick.find(entry => method(entry) === 'workbench-preview');
+    const nativeTiming = (performance.getEntriesByName('geometry:native-step')[0] as PerformanceMark | undefined)?.detail;
+    const shapeBody = document.querySelector('[data-geometry-format]');
     const measures = performance.getEntriesByType('measure').filter(entry => entry.name.startsWith('geometry:'))
       .map(entry => ({ name: entry.name, startMs: entry.startTime - start, ms: entry.duration }));
     const imports = observation.geometryImports.slice(previous.imports);
@@ -126,7 +131,7 @@ async function sample(page: Page, name: string, bytes: number, warm: boolean, di
     const uploads = observation.stepUploadFrames.slice(previous.uploads).map((frame: any) =>
       ({ ...frame, at: frame.at - start, firstCallAt: frame.firstCallAt === null ? null : frame.firstCallAt - start }));
     const lods = observation.geometryLods.slice(previous.lods).map((entry: any) => ({ level: entry.level, triangles: entry.triangles, receivedMs: entry.at - start }));
-    const gl = document.querySelector<HTMLCanvasElement>('[data-geometry-format="step"] canvas')?.getContext('webgl2');
+    const gl = shapeBody?.querySelector('canvas')?.getContext('webgl2');
     const debug = gl?.getExtension('WEBGL_debug_renderer_info');
     return {
       first: { submissionMs: firstModelSubmission, gpuReadyMs: firstModelGpuReady, displayProxyMs: firstModel },
@@ -135,6 +140,10 @@ async function sample(page: Page, name: string, bytes: number, warm: boolean, di
         ms: close.responseEnd - open.startTime, pages: pages.length, encodedBytes: pages.reduce((sum, page) => sum + page.encodedBodySize, 0) } : null,
       wasm: wasm.map(entry => ({ asset: method(entry), startedMs: entry.startTime - start, ms: entry.duration, transferBytes: entry.transferSize })),
       measures, gpu: debug && gl?.getParameter(debug.UNMASKED_RENDERER_WEBGL), lods, frames, uploads,
+      nativeTiming,
+      nativeCarrier: conversion && { startedMs: conversion.startTime - start, settledMs: conversion.responseEnd - start,
+        durationMs: conversion.duration, bytes: conversion.encodedBodySize },
+      bounds: [...(shapeBody?.querySelectorAll('p[title]') ?? [])].map(p => p.getAttribute('title')),
       geometry: imports.map((meshes: { triangles: number; vertices: number }[]) => ({
         meshes: meshes.length, triangles: meshes.reduce((n, mesh) => n + mesh.triangles, 0),
         vertices: meshes.reduce((n, mesh) => n + mesh.vertices, 0),
@@ -142,6 +151,17 @@ async function sample(page: Page, name: string, bytes: number, warm: boolean, di
       worker: importsTiming,
     };
   }, previous);
+  if (native) {
+    expect(result.source).toBeNull();
+    expect(result.wasm).toHaveLength(0);
+    if (!error) {
+      expect(result.nativeTiming?.processMs).toBeGreaterThan(0);
+      expect(result.nativeCarrier?.bytes).toBeGreaterThan(0);
+      expect(result.frames.some((frame: { triangles: number }) => frame.triangles > 0)).toBe(true);
+      expect(result.first.displayProxyMs).toBeGreaterThan(0);
+    }
+    return { ...result, error };
+  }
   expect(result.source?.pages, 'Read every source page through Product Host').toBe(Math.ceil(bytes / (2 * 1024 * 1024)));
   expect(result.source?.encodedBytes).toBeGreaterThanOrEqual(bytes);
   expect(result.wasm.length).toBe(warm ? 0 : 1);
@@ -168,18 +188,25 @@ test('paired STEP preview from production Workbench', async () => {
     throw new Error('Invalid STEP benchmark manifest');
   const cases = await Promise.all(config.fixtures.map(async fixture => ({ id: fixture.id, control: !!fixture.control,
     bytes: statSync(fixture.path).size, sha256: await sha256(fixture.path) })));
-  const buildAssets = await Promise.all(Object.entries(config.builds).map(async ([build, directory]) => {
+  const variants = config.native ? [
+    { id: 'wasm', dir: config.builds.lexer },
+    { id: 'native-1', dir: config.native.dist, threads: 1 },
+    { id: 'native-8', dir: config.native.dist, threads: 8 },
+  ] : Object.entries(config.builds).map(([id, dir]) => ({ id, dir, threads: undefined }));
+  const buildAssets = await Promise.all(variants.map(async ({ id: build, dir: directory }) => {
     const assets = join(directory, 'assets');
     const files = readdirSync(assets).filter(file => /^occt-import-js-.*\.wasm$/.test(file));
     if (files.length !== 1) throw new Error(`Expected one CAD WASM asset in ${build}`);
     return { build, asset: files[0]!, sha256: await sha256(join(assets, files[0]!)) };
   }));
-  if (buildAssets[0]?.sha256 === buildAssets[1]?.sha256) throw new Error('The two builds contain the same CAD WASM');
+  if (!config.native && buildAssets[0]?.sha256 === buildAssets[1]?.sha256) throw new Error('The two builds contain the same CAD WASM');
   const graphicsArgs = config.softwareWebGL ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
     : config.softwareWebGL === false && platform() === 'linux' ? ['--enable-gpu', '--use-gl=angle', '--use-angle=gl'] : [];
-  const fixture = await startDogfood();
-  const servers: Awaited<ReturnType<typeof serve>>[] = [];
+  if (config.fixtures.some(({ variants: selected }) => selected && (!selected.length ||
+    new Set(selected).size !== selected.length || selected.some(id => !variants.some(variant => variant.id === id)))))
+    throw new Error('Unknown or repeated STEP benchmark variant');
   const report = { cpu: cpus()[0]?.model, os: `${platform()} ${release()}`, browser: '', cases, buildAssets,
+    nativeExecutableSha256: config.native && await sha256(config.native.executable),
     affinity: platform() === 'linux' ? readFileSync('/proc/self/status', 'utf8').match(/^Cpus_allowed_list:\s*(.*)$/m)?.[1] : undefined,
     rows: [] as unknown[], failures: [] as unknown[] };
   const persist = () => {
@@ -187,67 +214,83 @@ test('paired STEP preview from production Workbench', async () => {
     writeFileSync(staging, JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
     renameSync(staging, config.output);
   };
-  try {
-    for (const { id, path } of config.fixtures)
-      for (const mode of ['cold', 'warm']) copyFileSync(path, join(fixture.workspaceA, `${id}-${mode}.step`));
-    for (const build of [config.builds.baseline, config.builds.lexer])
-      servers.push(await serve(build, fixture.hostConfigFile));
-    for (const diagnostic of [false, true]) {
-      for (let round = 0; round < (diagnostic ? diagnosticRepetitions : repetitions); round++) {
-        for (const [index, model] of cases.entries()) {
-          if (model.control && round > 0) continue;
-          for (const variant of (round + index) % 2 ? [1, 0] : [0, 1]) {
-            const build = variant ? 'lexer' : 'baseline';
-            const browser = await chromium.launch({ executablePath: config.executablePath, args: graphicsArgs });
-            try {
-              report.browser = browser.version();
-              const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 },
-                storageState: { cookies: [], origins: [{ origin: servers[variant]!.origin, localStorage: [{ name: 'rustx-locale-v1', value: 'en' }] }] } });
-              page.setDefaultTimeout(20_000);
-              page.setDefaultNavigationTimeout(20_000);
-              await instrument(page, diagnostic ? 'native' : true);
-              await observeUploads(page);
-              await page.emulateMedia({ reducedMotion: 'reduce' });
-              await page.goto(servers[variant]!.origin);
-              await connectRemote(page, fixture.endpoint, fixture.token);
-              await openEmptySession(page, fixture, 'Workspace A');
-              await page.locator('[data-preview-toggle]').click();
-              const workbench = page.locator('[data-workbench]');
-              await workbench.getByRole('button', { name: /Workspace files/ }).click();
-              for (const mode of ['cold', 'warm'] as const) {
-                const name = `${model.id}-${mode}.step`;
-                try {
-                  const value = await sample(page, name, model.bytes, mode === 'warm', diagnostic);
-                  if (config.softwareWebGL === false && !value.error)
-                    expect(value.gpu, 'Requested hardware WebGL').toMatch(/^(?!.*(?:SwiftShader|llvmpipe|softpipe)).+$/i);
-                  report.rows.push({ model: model.id, build, mode, round, diagnostic, ...value });
-                  persist();
-                  console.log(`${model.id} ${build} ${mode} ${diagnostic ? 'diagnostic' : round}: ${value.error ?? `${value.first.displayProxyMs.toFixed(1)} ms`}`);
-                  if (mode === 'cold') {
-                    const tab = workbench.getByRole('tab', { name, exact: false });
-                    await tab.hover();
-                    await tab.locator('[data-dockkit-tab-close]').click();
-                    await expect(page.locator(`[data-workbench-file="${name}"]`)).toHaveCount(0);
-                    await expect.poll(async () => (await resources(page)).contexts).toBe(0);
-                    await workbench.getByRole('tab', { name: 'Files', exact: false }).click();
-                  }
-                } catch (error) {
-                  report.failures.push({ model: model.id, build, mode, round, diagnostic, error: String(error) });
-                  persist();
-                  break;
+  for (const diagnostic of [false, true]) {
+    for (let round = 0; round < (diagnostic ? diagnosticRepetitions : repetitions); round++) {
+      for (const [index, model] of cases.entries()) {
+        if (model.control && round > 0) continue;
+        const { path, variants: selected } = config.fixtures[index]!;
+        for (let lane = 0; lane < variants.length; lane++) {
+          const variant = variants[(round + index + lane) % variants.length]!;
+          const { id: build, threads } = variant;
+          if (selected && !selected.includes(build)) continue;
+          // Give each variant a fresh session catalog. Session attachment is
+          // setup, outside both click-to-display windows.
+          const fixture = await startDogfood();
+          let server: Awaited<ReturnType<typeof serve>> | undefined;
+          let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+          try {
+            for (const mode of ['cold', 'warm']) {
+              const copy = join(fixture.workspaceA, `${model.id}-${mode}.step`);
+              copyFileSync(path, copy);
+              if (await sha256(copy) !== model.sha256) throw new Error(`STEP source changed while staging ${model.id}`);
+            }
+            if (threads) {
+              const hostConfig = JSON.parse(readFileSync(fixture.hostConfigFile, 'utf8'));
+              hostConfig.stepPreviewConverter = { executable: config.native!.executable, threads };
+              writeFileSync(fixture.hostConfigFile, JSON.stringify(hostConfig), { mode: 0o600 });
+            }
+            server = await serve(variant.dir, fixture.hostConfigFile);
+            browser = await chromium.launch({ executablePath: config.executablePath, args: graphicsArgs });
+            report.browser = browser.version();
+            const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 },
+              storageState: { cookies: [], origins: [{ origin: server.origin, localStorage: [{ name: 'rustx-locale-v1', value: 'en' }] }] } });
+            page.setDefaultTimeout(20_000);
+            page.setDefaultNavigationTimeout(20_000);
+            await instrument(page, diagnostic ? 'native' : true);
+            await observeUploads(page);
+            await page.emulateMedia({ reducedMotion: 'reduce' });
+            await page.goto(server.origin);
+            await connectRemote(page, fixture.endpoint, fixture.token);
+            await openEmptySession(page, fixture, 'Workspace A');
+            await page.locator('[data-preview-toggle]').click();
+            const workbench = page.locator('[data-workbench]');
+            await workbench.getByRole('button', { name: /Workspace files/ }).click();
+            for (const mode of ['cold', 'warm'] as const) {
+              const name = `${model.id}-${mode}.step`;
+              try {
+                const value = await sample(page, name, model.bytes, mode === 'warm', diagnostic, !!threads);
+                if (config.softwareWebGL === false && !value.error)
+                  expect(value.gpu, 'Requested hardware WebGL').toMatch(/^(?!.*(?:SwiftShader|llvmpipe|softpipe)).+$/i);
+                report.rows.push({ model: model.id, build, mode, round, diagnostic, ...value });
+                persist();
+                console.log(`${model.id} ${build} ${mode} ${diagnostic ? 'diagnostic' : round}: ${value.error ?? `${value.first.displayProxyMs.toFixed(1)} ms`}`);
+                if (mode === 'cold') {
+                  const tab = workbench.getByRole('tab', { name, exact: false });
+                  await tab.hover();
+                  await tab.locator('[data-dockkit-tab-close]').click();
+                  await expect(page.locator(`[data-workbench-file="${name}"]`)).toHaveCount(0);
+                  await expect.poll(async () => (await resources(page)).contexts).toBe(0);
+                  await workbench.getByRole('tab', { name: 'Files', exact: false }).click();
                 }
+              } catch (error) {
+                report.failures.push({ model: model.id, build, mode, round, diagnostic, error: String(error) });
+                persist();
+                break;
               }
-            } catch (error) {
-              report.failures.push({ model: model.id, build, mode: 'cold', round, diagnostic, error: String(error) });
-              persist();
-            } finally { await browser.close(); }
+            }
+          } catch (error) {
+            report.failures.push({ model: model.id, build, mode: 'cold', round, diagnostic, error: String(error) });
+            persist();
+          } finally {
+            try { await browser?.close(); }
+            finally {
+              try { await server?.stop(); }
+              finally { await fixture.stop(false); }
+            }
           }
         }
       }
     }
-    expect(report.failures).toEqual([]);
-  } finally {
-    await Promise.allSettled(servers.map(server => server.stop()));
-    await fixture.stop(false);
   }
+  expect(report.failures).toEqual([]);
 });

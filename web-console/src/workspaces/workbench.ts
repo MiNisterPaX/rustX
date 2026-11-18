@@ -7,6 +7,7 @@ export type WorkbenchRequest =
   | { kind: 'read'; path: string }
   | { kind: 'bytes'; path: string }
   | { kind: 'office'; path: string }
+  | { kind: 'step-glb'; path: string }
   | { kind: 'preview'; path: string; read: import('../../shared/file-preview.ts').FileReadOptions }
   | { kind: 'applications' }
   | { kind: 'open'; path: string; directory: boolean; application: 'files' | 'code' }
@@ -17,7 +18,20 @@ export type WorkbenchRequest =
   | { kind: 'resize'; id: string; cols: number; rows: number }
   | { kind: 'close'; id: string };
 export interface WorkbenchTerminal { id: string; shell: string; exited: boolean }
+export interface StepPreviewTiming {
+  occt: string;
+  threads: number;
+  readMs: number;
+  parseMs: number;
+  transferMs: number;
+  meshMs: number;
+  encodeMs: number;
+  processMs: number;
+  roots: number;
+  peakRssKiB: number;
+}
 export interface WorkbenchResult {
+  stepTiming?: StepPreviewTiming;
   preview?: import('../../shared/file-preview.ts').FileBytes;
   /** Host-admitted, normalized workspace-relative file reference. */
   path?: string;

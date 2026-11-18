@@ -27,12 +27,14 @@ import { observeFile } from './file-observation.ts';
 import { sameSessionFile } from '../shared/session-file-identity.ts';
 import { readWorkspacePreview, openWorkspaceBytePreview } from './workspace-preview.ts';
 import { observeNativeDelivery } from './native-file-observation.ts';
+import { NativeStepPreview, type StepPreviewConverter } from './step-preview.ts';
 
 export interface LocalHostConfig {
   /** Operator attests native runtime and Host share the same filesystem namespace. */
   nativeFilesystem?: 'shared';
   /** Explicit launcher-owned native process supervisor, never browser input. */
   terminalSupervisor?: string;
+  stepPreviewConverter?: StepPreviewConverter;
   transportToken?: string;
   /** Launcher-provisioned secret for native file reads. Never sent to browser. */
   productHostToken?: string;
@@ -51,6 +53,7 @@ export class LocalWorkspaceHost implements ProductHostWorkspaces {
   private closing?: Promise<void>;
   private documentReads = new Set<AbortController>();
   private readonly documents = new OfficeDocuments();
+  private readonly stepPreview?: NativeStepPreview;
   private fileReads = new Set<AbortController>();
   private previewOwners = new Set<AbortController>();
   private previewRetirements = new Set<Promise<void>>();
@@ -73,6 +76,7 @@ export class LocalWorkspaceHost implements ProductHostWorkspaces {
     this.terminals = new WorkspaceTerminals(config.terminalSupervisor);
     this.desktop = desktop; this.readSession = readSession;
     this.config = config;
+    if (config.stepPreviewConverter) this.stepPreview = new NativeStepPreview(config.stepPreviewConverter);
     if (!isAbsolute(config.metadataFile)) throw new Error('Host metadataFile must be absolute');
     this.roots = config.roots.map(root => {
       if (!isAbsolute(root.cwd) || !statSync(root.cwd).isDirectory()) throw new Error('Host roots must be absolute existing directories');
@@ -92,6 +96,7 @@ export class LocalWorkspaceHost implements ProductHostWorkspaces {
     const previous = new Set(this.registrations.map(row => row.location));
     this.registrations = rows;
     if (previous.size !== new Set(rows.map(row => row.location)).size || rows.some(row => !previous.has(row.location))) {
+      void this.stepPreview?.cancel();
       for (const read of [...this.fileReads, ...this.documentReads, ...this.fileObservations, ...this.previewOwners]) read.abort();
     }
   }
@@ -125,7 +130,7 @@ export class LocalWorkspaceHost implements ProductHostWorkspaces {
     this.closed = true;
     for (const read of [...this.fileReads, ...this.documentReads, ...this.fileObservations, ...this.previewOwners]) read.abort();
     return this.closing ??= (async () => {
-      const result = await Promise.allSettled([this.documents.dispose(), this.terminals.close(), this.terminalObserver?.then(close => close()), this.fileOwnership?.then(close => close()), ...this.fileObservationTasks, ...this.previewRetirements]);
+      const result = await Promise.allSettled([this.stepPreview?.cancel(), this.documents.dispose(), this.terminals.close(), this.terminalObserver?.then(close => close()), this.fileOwnership?.then(close => close()), ...this.fileObservationTasks, ...this.previewRetirements]);
       const failures = result.flatMap(item => item.status === 'rejected' ? [item.reason] : []);
       if (this.terminalFailure) failures.push(this.terminalFailure);
       if (failures.length) throw new AggregateError(failures, 'Host terminal settlement failed');
@@ -452,6 +457,14 @@ export class LocalWorkspaceHost implements ProductHostWorkspaces {
         if (!fstatSync(fd).isFile()) throw new Error('Not a regular file');
         return { path };
       });
+    }
+    if (request.kind === 'step-glb') {
+      if (!this.stepPreview) throw new Error('preview_unavailable');
+      return this.stepPreview.run(root, request.path, async () => {
+        const { cwd: current } = await read();
+        check(current);
+        if (current !== root) throw new Error('source_changed');
+      }, signal);
     }
     if (request.kind === 'office') {
       const path = request.path, extension = path.split('.').at(-1)?.toLowerCase();

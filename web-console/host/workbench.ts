@@ -10,7 +10,7 @@ export const workspaceDescriptors = createRequire(import.meta.url)('./workspace-
 const MAX_OUTPUT = 256 * 1024;
 type TerminalOwner = WorkbenchTarget & { generation?: bigint };
 type TerminalRead = () => Promise<{ cwd: string; ownershipGeneration?: string }>;
-type TerminalRequest = Exclude<WorkbenchRequest, { kind: 'applications' | 'open' | 'office' | 'preview' | 'resolve' | 'files' | 'read' | 'bytes' }>;
+type TerminalRequest = Extract<WorkbenchRequest, { kind: 'terminals' | 'create' | 'poll' | 'input' | 'resize' | 'close' }>;
 function sameTarget(a: WorkbenchTarget, b: WorkbenchTarget) {
   return 'workspace_id' in a ? 'workspace_id' in b && a.workspace_id === b.workspace_id
     : 'session_id' in b && a.session_id === b.session_id && a.active_node === b.active_node;

@@ -80,6 +80,8 @@ function Directory({ path, call, view, revision, onOpen, loaded, current }: { pa
 }
 export function WorkspaceFile({ path, call, view, onOpen, visible = true, navigator, tools }: { navigator?: ReactNode; tools?: ReactNode; visible?: boolean; path: string; call: WorkbenchCall; view: FileTabView; onOpen:(path:string)=>void }) {
   const tx = useTranslation();
+  const nativeStep = import.meta.env.MODE === 'native-step-preview' && /\.(?:step|stp)$/i.test(path);
+  const geometryPath = nativeStep ? path + '.glb' : path;
   const [wrap, setWrap] = useState(view.wrap);
   const [mode, setMode] = useState<Viewer>(view.mode ?? viewersForPath(path)[0]), [menu, setMenu] = useState(false);
   if (!view.preview || view.preview.path !== path) {
@@ -90,7 +92,12 @@ export function WorkspaceFile({ path, call, view, onOpen, visible = true, naviga
       if (!view.current()) throw new Error('obsolete');
       const result = value.preview;
       if (!result || !isFileData(result.data) || !result.version || result.data.byteLength > FILE_PREVIEW_LIMITS.convertedPdfBytes) throw new Error('malformed');
-      view.cwd = value.cwd ?? ''; return result;
+      view.cwd = value.cwd ?? '';
+      if (request.kind === 'step-glb' && value.stepTiming) {
+        performance.clearMarks('geometry:native-step');
+        performance.mark('geometry:native-step', { detail: value.stepTiming });
+      }
+      return result;
     };
     const owner = new PreviewContentOwner({ current: () => !lifetime.signal.aborted && view.current(), immutable: false,
       page: async (offset, signal) => {
@@ -98,6 +105,7 @@ export function WorkspaceFile({ path, call, view, onOpen, visible = true, naviga
         if (result.offset !== offset || !Number.isSafeInteger(result.lines) || result.lines! < 0 || result.lines! > FILE_PREVIEW_LIMITS.pageLines || !result.eof && !result.lines || result.data.byteLength > FILE_PREVIEW_LIMITS.pageBytes) throw new Error('malformed');
         return { text: new TextDecoder('utf-8', { fatal: true }).decode(result.data), version: result.version, offset, lines: result.lines!, eof: result.eof };
       }, bytes: async (signal, mode) => {
+        if (mode === 'geometry' && nativeStep) return read({ kind: 'step-glb', path }, signal);
         if (mode === 'geometry') return readGeometrySource(signal => {
           const open = view.preview!.call.openPreview; if (!open) throw new Error('Preview operation unavailable'); return open(path, signal);
         }, signal);
@@ -121,7 +129,7 @@ export function WorkspaceFile({ path, call, view, onOpen, visible = true, naviga
     if (mode === 'geometry' && !visible) return;
     view.cache.release(owner); owner.activate();
   }, [owner, view, mode, visible]);
-  useEffect(() => { if (mode === 'geometry' && !visible) return; if (mode === 'geometry') preloadGeometry(path); if (mode) owner.ensure(mode === 'geometry' ? 'geometry' : mode === 'office' ? path.toLowerCase().endsWith('.docx') ? 'docx' : 'pptx' : loadsBytes(mode) ? 'bytes' : 'pages', Math.max(view.document?.textLoadedLines ?? 0, view.line ?? 0)); }, [owner, mode, path, visible]);
+  useEffect(() => { if (mode === 'geometry' && !visible) return; if (mode === 'geometry') preloadGeometry(geometryPath); if (mode) owner.ensure(mode === 'geometry' ? 'geometry' : mode === 'office' ? path.toLowerCase().endsWith('.docx') ? 'docx' : 'pptx' : loadsBytes(mode) ? 'bytes' : 'pages', Math.max(view.document?.textLoadedLines ?? 0, view.line ?? 0)); }, [owner, mode, path, geometryPath, visible]);
   useLayoutEffect(() => {
     const el = scroll.current;
     if (!el || view.line === undefined || !['code', 'text'].includes(mode) || !value.page?.eof && value.loadedLines < view.line) return;
@@ -148,7 +156,7 @@ export function WorkspaceFile({ path, call, view, onOpen, visible = true, naviga
     {failure !== undefined && <div className={css.note} role="alert"><p>{tx(`artifacts:document.${failure}`)}</p>{!['source_missing','source_unavailable','authorization_revoked','obsolete'].includes(failure) && !(failure === 'too_large' && value.text === undefined) && <Button onClick={() => owner.retry()}>{tx('artifacts:artifact-preview.retry-preview')}</Button>}</div>}
     {mode !== 'geometry' && !owner.automaticRefresh && <p className={css.note} role="note">{tx('artifacts:document.manual-refresh')}</p>}
     {value.text === '' && value.page?.eof && <p className={css.note}>{tx('artifacts:document.empty')}</p>}
-    {!mode ? <p className={css.note}>{tx('artifacts:artifact-preview.this-artifact-has-no-supported-inline-viewer')}</p> : !loaded ? error === undefined && <LoadingIndicator label={mode === 'geometry' && value.loading ? <GeometryLoading stage="reading"/> : tx('artifacts:workbench.loading')}/> : mode !== 'text' && mode !== 'code' ? <div ref={scroll} className={css.document} onScroll={reading.onScroll}><DocumentBody key={mode} visible={visible} call={call} onOpen={onOpen} mode={mode} text={value.text ?? ''} bytes={bytes} path={path} view={view} signal={lifetime.signal} retry={() => owner.retry()}/>{more}</div> : mode === 'code' ? <div className={css.renderer} data-wrap={wrap}><CodeBlock className={css.code} contentRef={scroll} code={value.text ?? ''} lang={languageForPath(path)} lineNumbers copyLabel={tx('common:search-block.copy')} copiedLabel={tx('common:search-block.copied')} toolbarLabel={tx('artifacts:workbench.code')}/>{more}</div> : <div ref={scroll} className={css.plainText} data-wrap={wrap} onScroll={event => {
+    {!mode ? <p className={css.note}>{tx('artifacts:artifact-preview.this-artifact-has-no-supported-inline-viewer')}</p> : !loaded ? error === undefined && <LoadingIndicator label={mode === 'geometry' && value.loading ? <GeometryLoading stage="reading"/> : tx('artifacts:workbench.loading')}/> : mode !== 'text' && mode !== 'code' ? <div ref={scroll} className={css.document} onScroll={reading.onScroll}><DocumentBody key={mode} visible={visible} call={call} onOpen={onOpen} mode={mode} text={value.text ?? ''} bytes={bytes} path={mode === 'geometry' ? geometryPath : path} view={view} signal={lifetime.signal} retry={() => owner.retry()}/>{more}</div> : mode === 'code' ? <div className={css.renderer} data-wrap={wrap}><CodeBlock className={css.code} contentRef={scroll} code={value.text ?? ''} lang={languageForPath(path)} lineNumbers copyLabel={tx('common:search-block.copy')} copiedLabel={tx('common:search-block.copied')} toolbarLabel={tx('artifacts:workbench.code')}/>{more}</div> : <div ref={scroll} className={css.plainText} data-wrap={wrap} onScroll={event => {
       const node = event.currentTarget; reading.onScroll(event);
       if (value.page && !value.page.eof && !value.loading && error === undefined && node.scrollHeight - node.scrollTop - node.clientHeight < 160) owner.more();
     }}><TextLines text={value.text ?? ''}/>{more}</div>}

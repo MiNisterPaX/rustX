@@ -48,7 +48,7 @@ export function workspaceHandler(host?: ProductHostWorkspaces) {
       switch (request.url.slice('/product-host/'.length)) {
         case 'workbench': {
           if (!host.workbench || Object.keys(body).some(key => !['scope', 'call'].includes(key))) throw new Error('Workbench unavailable');
-          if (['preview', 'office'].includes(body.call?.request?.kind)) throw new Error('File previews require the settled carrier');
+          if (['preview', 'office', 'step-glb'].includes(body.call?.request?.kind)) throw new Error('File previews require the settled carrier');
           const abort = new AbortController();
           const closed = () => { if (!response.writableFinished) abort.abort(); };
           response.on('close', closed);
@@ -146,7 +146,7 @@ export function workspaceHandler(host?: ProductHostWorkspaces) {
         case 'file-read':
           {
             const workspace = request.url.endsWith('/workbench-preview');
-            if (workspace ? !host.workbench || !['preview', 'office'].includes(body.call?.request?.kind) : !host.readDelivery) throw new Error('File preview unavailable on this Product Host');
+            if (workspace ? !host.workbench || !['preview', 'office', 'step-glb'].includes(body.call?.request?.kind) : !host.readDelivery) throw new Error('File preview unavailable on this Product Host');
             if (Object.keys(body).some(key => !['scope', workspace ? 'call' : 'read', 'operationId'].includes(key))
               || typeof body.operationId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.operationId)) throw new Error('Invalid file operation');
             if (files.size >= 2 || files.has(body.operationId)) throw new Error('capacity');
