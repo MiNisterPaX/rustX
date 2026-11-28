@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::FileExt as _;
+use std::os::unix::fs::{FileExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
@@ -188,6 +188,7 @@ impl Transfer {
         let Some(lock) = lock_authority(&owner)? else {
             return Ok(Reply::Busy);
         };
+        recover_pruning(&owner)?;
         cleanup_stages(&owner)?;
         self.sync = Some(Sync {
             authority: authority.to_owned(),
@@ -390,7 +391,14 @@ impl Transfer {
         stage.data.verify()?;
         let stage_directory = sync.owner.child(OsStr::new(&stage.name))?;
         write_new(&stage_directory, SIZE, stage.bytes.to_string().as_bytes())?;
-        let reservations = plan_prune(&sync.owner, stage.bytes, byte_limit)?;
+        let reservations = plan_prune(
+            &sync.owner,
+            &stage_directory,
+            &stage.name,
+            &stage.version,
+            stage.bytes,
+            byte_limit,
+        )?;
         before_commit();
         let mut rollback_failed = false;
         let mut publication_collision = false;
@@ -433,11 +441,16 @@ impl Transfer {
         });
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let moved: io::Result<()> = Err(io::ErrorKind::Unsupported.into());
-        // Cleanup can be slow, so it stays outside the grant. Leave any
-        // unsuccessfully restored directories intact until the next sync's recovery.
+        // Cleanup can be slow, so it stays outside the grant. A committed
+        // replacement is retained for the rest of this sync, and the next
+        // sync recovers pending journals before it can retire that proof.
         if !rollback_failed {
             for (_, retired) in &reservations {
-                let _ = cleanup_work_item(&sync.owner, retired);
+                if moved.is_ok() {
+                    let _ = cleanup_prune_item(&sync.owner, retired);
+                } else {
+                    let _ = remove_intent(&sync.owner, retired);
+                }
             }
         }
         match moved {
@@ -724,6 +737,7 @@ fn retire_inactive_authority(cache: &PackageDirectory, name: &OsStr) -> io::Resu
     let Some(_lock) = lock_authority(&owner)? else {
         return Ok(false);
     };
+    recover_pruning(&owner)?;
     cleanup_stages(&owner)?;
     for child in owner.names(MAX_CACHE_VERSIONS * 2 + 4)? {
         let Some(text) = child.to_str() else {
@@ -829,6 +843,9 @@ fn cleanup_retired_authority(cache: &PackageDirectory, name: &OsStr) -> io::Resu
 /// version found unleased cannot acquire a new lease during publication.
 fn plan_prune(
     owner: &PackageDirectory,
+    stage: &PackageDirectory,
+    stage_name: &str,
+    version: &str,
     incoming: u64,
     byte_limit: u64,
 ) -> io::Result<Vec<(PathBuf, String)>> {
@@ -873,8 +890,14 @@ fn plan_prune(
     }
     // Reserve every cleanup intent before retiring any version.
     let mut reservations = Vec::new();
-    for _ in &selected {
-        match reserve_work(owner, ".prune-") {
+    let (stage_device, stage_inode) = directory_identity(stage)?;
+    for original in &selected {
+        let token = stage_name
+            .strip_prefix(".stage-")
+            .ok_or(io::ErrorKind::InvalidInput)?;
+        let original = original.to_str().ok_or(io::ErrorKind::InvalidInput)?;
+        let name = format!(".prune-{token}-{version}-{original}-{stage_device:x}-{stage_inode:x}");
+        match reserve_prune(owner, stage, &name) {
             Ok(name) => reservations.push(name),
             Err(error) => {
                 for name in &reservations {
@@ -913,12 +936,48 @@ fn retire_versions(
 
 #[cfg(test)]
 fn prune(owner: &PackageDirectory, incoming: u64, byte_limit: u64) -> io::Result<()> {
-    let reservations = plan_prune(owner, incoming, byte_limit)?;
-    retire_versions(owner, &reservations, &mut 0)?;
-    for (_, retired) in &reservations {
-        cleanup_work_item(owner, retired)?;
+    let name = reserve_work(owner, ".stage-")?;
+    rustix::fs::mkdirat(
+        owner.descriptor(),
+        name.as_str(),
+        Mode::from_raw_mode(0o700),
+    )?;
+    let stage = owner.child(OsStr::new(&name))?;
+    write_new(&stage, VERSION_MARKER, MARKER_CONTENT)?;
+    let result = (|| {
+        let reservations = plan_prune(owner, &stage, &name, &"f".repeat(64), incoming, byte_limit)?;
+        retire_versions(owner, &reservations, &mut 0)?;
+        for (_, retired) in &reservations {
+            cleanup_prune_item(owner, retired)?;
+        }
+        Ok(())
+    })();
+    cleanup_work_item(owner, &name)?;
+    result
+}
+
+// An atomic hard link is both the ownership intent and a durable proof of
+// the exact staged marker inode. It is installed before any live rename.
+fn reserve_prune(
+    owner: &PackageDirectory,
+    stage: &PackageDirectory,
+    name: &str,
+) -> io::Result<String> {
+    owner.verify()?;
+    stage.verify()?;
+    match rustix::fs::statat(owner.descriptor(), name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(_) => return Err(io::ErrorKind::AlreadyExists.into()),
+        Err(rustix::io::Errno::NOENT) => {}
+        Err(error) => return Err(error.into()),
     }
-    Ok(())
+    rustix::fs::linkat(
+        stage.descriptor(),
+        VERSION_MARKER,
+        owner.descriptor(),
+        format!("{name}{INTENT_SUFFIX}").as_str(),
+        AtFlags::empty(),
+    )?;
+    Ok(name.to_owned())
 }
 
 // Reserve a random work name with an ownership intent before creating or
@@ -978,7 +1037,7 @@ fn cleanup_stages(owner: &PackageDirectory) -> io::Result<()> {
         let Some(work) = text.strip_suffix(INTENT_SUFFIX) else {
             continue;
         };
-        if !stage_name(work) && !prune_name(work) {
+        if !stage_name(work) {
             continue;
         }
         // Do not claim unmarked files or directories left by another actor.
@@ -993,8 +1052,158 @@ fn stage_name(name: &str) -> bool {
     work_name(name, ".stage-")
 }
 
-fn prune_name(name: &str) -> bool {
-    work_name(name, ".prune-")
+fn directory_identity(directory: &PackageDirectory) -> io::Result<(u64, u64)> {
+    let metadata = File::from(directory.descriptor().try_clone()?).metadata()?;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+// Decode only the names that this implementation can have reserved.
+fn prune_parts(name: &str) -> Option<(&str, &str, &str, u64, u64)> {
+    let mut parts = name.strip_prefix(".prune-")?.split('-');
+    let token = parts.next()?;
+    let replacement = parts.next()?;
+    let original = parts.next()?;
+    let device = u64::from_str_radix(parts.next()?, 16).ok()?;
+    let inode = u64::from_str_radix(parts.next()?, 16).ok()?;
+    if parts.next().is_some()
+        || !work_name(&format!(".stage-{token}"), ".stage-")
+        || !valid_cache_id(replacement)
+        || !valid_cache_id(original)
+    {
+        return None;
+    }
+    Some((token, replacement, original, device, inode))
+}
+
+fn cleanup_prune_item(owner: &PackageDirectory, name: &str) -> io::Result<()> {
+    verify_marker(owner, &format!("{name}{INTENT_SUFFIX}"))?;
+    let directory = match owner.child(OsStr::new(name)) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return remove_intent(owner, name),
+        Err(error) => return Err(error),
+    };
+    let children = directory.names(MAX_PACKAGE_ENTRIES + 4)?;
+    match verify_marker(&directory, VERSION_MARKER) {
+        Ok(()) => {
+            // Keep the ownership marker until all other entries are gone.
+            // An interrupted cleanup can then safely resume.
+            let mut remaining = MAX_PACKAGE_ENTRIES + 4;
+            for entry in children {
+                if entry == Path::new(VERSION_MARKER) {
+                    continue;
+                }
+                if remaining == 0 {
+                    return Err(io::ErrorKind::FileTooLarge.into());
+                }
+                remaining -= 1;
+                let metadata = rustix::fs::statat(
+                    directory.descriptor(),
+                    entry.as_os_str(),
+                    AtFlags::SYMLINK_NOFOLLOW,
+                )?;
+                if rustix::fs::FileType::from_raw_mode(metadata.st_mode)
+                    == rustix::fs::FileType::Directory
+                {
+                    remove_tree(&directory, entry.as_os_str(), &mut remaining)?;
+                } else {
+                    rustix::fs::unlinkat(
+                        directory.descriptor(),
+                        entry.as_os_str(),
+                        AtFlags::empty(),
+                    )?;
+                }
+            }
+            directory.verify()?;
+            rustix::fs::unlinkat(directory.descriptor(), VERSION_MARKER, AtFlags::empty())?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound && children.is_empty() => {}
+        Err(error) => return Err(error),
+    }
+    owner.verify()?;
+    rustix::fs::unlinkat(owner.descriptor(), name, AtFlags::REMOVEDIR)?;
+    remove_intent(owner, name)
+}
+
+// Resolve every retirement before deleting any unfinished stage or considering
+// authority retirement. The intent hard link survives loss of the stage name.
+fn recover_pruning(owner: &PackageDirectory) -> io::Result<()> {
+    for entry in owner.names(MAX_CACHE_VERSIONS * 2 + 4)? {
+        let Some(intent) = entry.to_str() else {
+            continue;
+        };
+        let Some(name) = intent.strip_suffix(INTENT_SUFFIX) else {
+            continue;
+        };
+        let Some((token, replacement, original, device, inode)) = prune_parts(name) else {
+            continue;
+        };
+        verify_marker(owner, intent)?;
+        let proof = owner.file(Path::new(intent))?.metadata()?;
+        // A destination may collide while the staged inode still exists.
+        // Only the stage-to-final rename removes the authorized stage name.
+        let stage_absent = match rustix::fs::statat(
+            owner.descriptor(),
+            format!(".stage-{token}").as_str(),
+            AtFlags::SYMLINK_NOFOLLOW,
+        ) {
+            Ok(_) => false,
+            Err(rustix::io::Errno::NOENT) => true,
+            Err(error) => return Err(error.into()),
+        };
+        let committed =
+            match rustix::fs::statat(owner.descriptor(), replacement, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(metadata)
+                    if rustix::fs::FileType::from_raw_mode(metadata.st_mode)
+                        != rustix::fs::FileType::Directory =>
+                {
+                    false
+                }
+                Ok(_) => {
+                    let directory = owner.child(OsStr::new(replacement))?;
+                    if directory_identity(&directory)? == (device, inode) {
+                        match directory.file(Path::new(VERSION_MARKER)) {
+                            Ok(marker) => {
+                                let published = marker.metadata()?;
+                                (proof.dev(), proof.ino()) == (published.dev(), published.ino())
+                            }
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+                            Err(error) => return Err(error),
+                        }
+                    } else {
+                        false
+                    }
+                }
+                Err(rustix::io::Errno::NOENT) => false,
+                Err(error) => return Err(error.into()),
+            };
+        if committed && !stage_absent {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        if committed {
+            cleanup_prune_item(owner, name)?;
+        } else {
+            match rustix::fs::statat(owner.descriptor(), name, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(_) => {
+                    let retired = owner.child(OsStr::new(name))?;
+                    verify_marker(&retired, VERSION_MARKER)?;
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                    rustix::fs::renameat_with(
+                        owner.descriptor(),
+                        name,
+                        owner.descriptor(),
+                        original,
+                        rustix::fs::RenameFlags::NOREPLACE,
+                    )?;
+                    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                    return Err(io::ErrorKind::Unsupported.into());
+                }
+                Err(rustix::io::Errno::NOENT) => {}
+                Err(error) => return Err(error.into()),
+            }
+            remove_intent(owner, name)?;
+        }
+    }
+    Ok(())
 }
 
 fn work_name(name: &str, prefix: &str) -> bool {
@@ -1873,7 +2082,105 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_pruning_recovers_after_version_marker_removal() {
+    fn interrupted_pruning_restores_version_on_next_bind() {
+        for cut in 0..4 {
+            let home = tempfile::tempdir().unwrap();
+            let root = home.path().join("rustx");
+            let collection = super::super::skills::UserSkills::collection_path(&root).unwrap();
+            let authority = authority();
+            let mut transfer = Transfer::default();
+            transfer.begin_sync(&root, &collection, &authority).unwrap();
+            let owner = &transfer.sync.as_ref().unwrap().owner;
+            let original = version('b');
+            let directory = ensure_directory(owner, OsStr::new(&original)).unwrap().0;
+            write_new(&directory, VERSION_MARKER, MARKER_CONTENT).unwrap();
+            write_new(&directory, LEASE, b"").unwrap();
+            write_new(&directory, SIZE, b"1").unwrap();
+            let data = ensure_directory(&directory, OsStr::new("data")).unwrap().0;
+            write_new(&data, "SKILL.md", b"x").unwrap();
+            let replacement = version('c');
+            transfer.begin_package(&replacement).unwrap();
+            let sync = transfer.sync.as_mut().unwrap();
+            let stage = sync.stage.take().unwrap();
+            let directory = sync.owner.child(OsStr::new(&stage.name)).unwrap();
+            let reservations =
+                plan_prune(&sync.owner, &directory, &stage.name, &replacement, 1, 1).unwrap();
+            retire_versions(&sync.owner, &reservations, &mut 0).unwrap();
+            let owner_path = collection.join(CACHE).join(&authority);
+            assert!(!owner_path.join(&original).exists());
+            if cut == 1 {
+                // A hard-linked marker in a different directory is not a
+                // commit, even if the stage name is subsequently removed.
+                let collision = ensure_directory(&sync.owner, OsStr::new(&replacement))
+                    .unwrap()
+                    .0;
+                rustix::fs::linkat(
+                    directory.descriptor(),
+                    VERSION_MARKER,
+                    collision.descriptor(),
+                    VERSION_MARKER,
+                    AtFlags::empty(),
+                )
+                .unwrap();
+                // Even after the stage is removed, the collided directory's
+                // inode differs from the staged directory.
+                remove_tree(
+                    &sync.owner,
+                    OsStr::new(&stage.name),
+                    &mut (MAX_PACKAGE_ENTRIES + 5),
+                )
+                .unwrap();
+            } else if cut == 3 {
+                fs::write(owner_path.join(&replacement), b"personal").unwrap();
+            } else if cut == 2 {
+                // Recovery itself can stop after restoring the name but
+                // before removing its intent.
+                rustix::fs::renameat_with(
+                    sync.owner.descriptor(),
+                    reservations[0].1.as_str(),
+                    sync.owner.descriptor(),
+                    original.as_str(),
+                    rustix::fs::RenameFlags::NOREPLACE,
+                )
+                .unwrap();
+            }
+            // Persist the exact cut without running stage cleanup.
+            drop(stage);
+            drop(transfer);
+            let mut resumed = Transfer::default();
+            assert_eq!(
+                resumed.begin_sync(&root, &collection, &authority).unwrap(),
+                Reply::SyncStarted
+            );
+            assert!(matches!(
+                resumed.retain(&original),
+                Ok(Reply::Retained { .. })
+            ));
+            assert_eq!(
+                fs::read(owner_path.join(&original).join("data/SKILL.md")).unwrap(),
+                b"x"
+            );
+            assert_eq!(owner_path.join(&replacement).exists(), cut == 1 || cut == 3);
+            assert!(!owner_path.join(&reservations[0].1).exists());
+            assert!(
+                !owner_path
+                    .join(format!("{}{INTENT_SUFFIX}", reservations[0].1))
+                    .exists()
+            );
+            resumed.lane_lost().unwrap();
+            assert_eq!(
+                resumed.begin_sync(&root, &collection, &authority).unwrap(),
+                Reply::SyncStarted
+            );
+            assert!(matches!(
+                resumed.retain(&original),
+                Ok(Reply::Retained { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn authority_retirement_recovers_pending_prune_before_checking_leases() {
         let home = tempfile::tempdir().unwrap();
         let root = home.path().join("rustx");
         let collection = super::super::skills::UserSkills::collection_path(&root).unwrap();
@@ -1888,30 +2195,82 @@ mod tests {
         write_new(&directory, SIZE, b"1").unwrap();
         let data = ensure_directory(&directory, OsStr::new("data")).unwrap().0;
         write_new(&data, "SKILL.md", b"x").unwrap();
-        let retired = reserve_work(owner, ".prune-").unwrap();
+        let lease = open_existing(&directory, LEASE).unwrap();
+        let replacement = version('c');
+        transfer.begin_package(&replacement).unwrap();
+        let sync = transfer.sync.as_mut().unwrap();
+        let stage = sync.stage.take().unwrap();
+        let directory = sync.owner.child(OsStr::new(&stage.name)).unwrap();
+        let reservations =
+            plan_prune(&sync.owner, &directory, &stage.name, &replacement, 1, 1).unwrap();
+        retire_versions(&sync.owner, &reservations, &mut 0).unwrap();
+        rustix::fs::flock(&lease, FlockOperation::NonBlockingLockShared).unwrap();
+        drop(stage);
+        drop(transfer);
+        let cache = PackageDirectory::open(&collection.join(CACHE)).unwrap();
+        assert!(!retire_inactive_authority(&cache, OsStr::new(&authority)).unwrap());
+        assert_eq!(
+            fs::read(
+                collection
+                    .join(CACHE)
+                    .join(authority)
+                    .join(original)
+                    .join("data/SKILL.md")
+            )
+            .unwrap(),
+            b"x"
+        );
+    }
+
+    #[test]
+    fn interrupted_pruning_cleans_committed_retirement_after_partial_cleanup() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("rustx");
+        let collection = super::super::skills::UserSkills::collection_path(&root).unwrap();
+        let authority = authority();
+        let mut transfer = Transfer::default();
+        transfer.begin_sync(&root, &collection, &authority).unwrap();
+        let owner = &transfer.sync.as_ref().unwrap().owner;
+        let original = version('b');
+        let directory = ensure_directory(owner, OsStr::new(&original)).unwrap().0;
+        write_new(&directory, VERSION_MARKER, MARKER_CONTENT).unwrap();
+        write_new(&directory, LEASE, b"").unwrap();
+        write_new(&directory, SIZE, b"1").unwrap();
+        let data = ensure_directory(&directory, OsStr::new("data")).unwrap().0;
+        write_new(&data, "SKILL.md", b"x").unwrap();
+        let replacement = version('c');
+        transfer.begin_package(&replacement).unwrap();
+        let sync = transfer.sync.as_mut().unwrap();
+        let stage = sync.stage.take().unwrap();
+        let directory = sync.owner.child(OsStr::new(&stage.name)).unwrap();
+        let reservations =
+            plan_prune(&sync.owner, &directory, &stage.name, &replacement, 1, 1).unwrap();
+        retire_versions(&sync.owner, &reservations, &mut 0).unwrap();
         rustix::fs::renameat_with(
-            owner.descriptor(),
-            original.as_str(),
-            owner.descriptor(),
-            retired.as_str(),
+            sync.owner.descriptor(),
+            stage.name.as_str(),
+            sync.owner.descriptor(),
+            replacement.as_str(),
             rustix::fs::RenameFlags::NOREPLACE,
         )
         .unwrap();
         let owner_path = collection.join(CACHE).join(&authority);
-        fs::remove_file(owner_path.join(&retired).join(VERSION_MARKER)).unwrap();
-        transfer.lane_lost().unwrap();
-
+        fs::remove_file(owner_path.join(&reservations[0].1).join("data/SKILL.md")).unwrap();
+        drop(stage);
+        drop(transfer);
+        let mut resumed = Transfer::default();
         assert_eq!(
-            transfer.begin_sync(&root, &collection, &authority).unwrap(),
+            resumed.begin_sync(&root, &collection, &authority).unwrap(),
             Reply::SyncStarted
         );
-        assert!(!owner_path.join(&retired).exists());
+        assert!(!owner_path.join(&reservations[0].1).exists());
         assert!(
             !owner_path
-                .join(format!("{retired}{INTENT_SUFFIX}"))
+                .join(format!("{}{INTENT_SUFFIX}", reservations[0].1))
                 .exists()
         );
-        assert_eq!(transfer.begin_package(&original).unwrap(), Reply::Accepted);
+        assert!(owner_path.join(replacement).is_dir());
+        assert_eq!(resumed.begin_package(&original).unwrap(), Reply::Accepted);
     }
 
     #[test]
