@@ -1165,8 +1165,8 @@ The metadata exclusions include the documented [EC2 IPv6 endpoint](https://docs.
 and [Alibaba ECS endpoint](https://www.alibabacloud.com/help/en/ecs/user-guide/view-instance-metadata/).
 Requests carrying service headers, credentials, session IDs or SSE continuation
 IDs remain within their granted origin across redirects. When an anonymous
-legacy Initialize request establishes a session at another origin, subsequent
-session requests and cleanup start at the endpoint that issued the session ID.
+legacy Initialize request crosses origins before establishing a session,
+subsequent requests and cleanup start at the endpoint that issued the session ID.
 Shadowing a User service selects the Workspace service's credentials.
 
 Workspace stdio resolves path operands against the configuration directory
