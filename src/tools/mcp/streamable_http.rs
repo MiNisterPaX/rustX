@@ -1319,11 +1319,14 @@ impl McpHttpClient {
                         attempt.error("Workspace MCP redirect destination is not permitted")
                     } else {
                         if let Some(redirect) = &setup_redirect {
-                            // A same-origin gateway may redirect only
-                            // Initialize and keep serving the session at
-                            // the configured path.
-                            *redirect.lock().expect("MCP setup redirect") =
-                                (attempt.url().origin() != origin).then(|| attempt.url().clone());
+                            let mut issuer = redirect.lock().expect("MCP setup redirect");
+                            // A gateway that redirects only within its own
+                            // origin can keep serving the configured path.
+                            // After crossing origins, remember the final hop
+                            // even if the chain returns to the first origin.
+                            if issuer.is_some() || attempt.url().origin() != origin {
+                                *issuer = Some(attempt.url().clone());
+                            }
                         }
                         attempt.follow()
                     }
@@ -1391,8 +1394,8 @@ impl McpHttpClient {
                 "Workspace MCP session is already bound to its redirect destination",
             )));
         }
-        // This client is used only for this POST. Its final accepted redirect
-        // hop identifies a cross-origin issuer of the resulting session ID.
+        // This client is used only for this POST. If it crossed origins,
+        // the final accepted hop identifies the issuer of the session ID.
         let redirect = Arc::new(Mutex::new(None));
         let client = Self::build_http_client(Some(&uri), true, Some(redirect.clone()))
             .map_err(setup_client_error)?;
@@ -2214,13 +2217,27 @@ mod tests {
     #[cfg(feature = "mcp-fixture")]
     #[tokio::test]
     async fn redirected_stateful_workspace_session_discovers_tools_and_cleans_up_at_the_issuer() {
-        check_redirected_stateful_workspace_session(true).await;
+        check_redirected_stateful_workspace_session(WorkspaceRedirect::CrossOrigin).await;
     }
 
     #[cfg(feature = "mcp-fixture")]
     #[tokio::test]
     async fn same_origin_initialize_redirect_keeps_the_configured_session_path() {
-        check_redirected_stateful_workspace_session(false).await;
+        check_redirected_stateful_workspace_session(WorkspaceRedirect::SameOrigin).await;
+    }
+
+    #[cfg(feature = "mcp-fixture")]
+    #[tokio::test]
+    async fn initialize_redirect_returning_to_the_first_origin_pins_the_issuer_path() {
+        check_redirected_stateful_workspace_session(WorkspaceRedirect::ReturnToStart).await;
+    }
+
+    #[cfg(feature = "mcp-fixture")]
+    #[derive(PartialEq, Eq)]
+    enum WorkspaceRedirect {
+        CrossOrigin,
+        SameOrigin,
+        ReturnToStart,
     }
 
     #[cfg(feature = "mcp-fixture")]
@@ -2277,7 +2294,7 @@ mod tests {
     }
 
     #[cfg(feature = "mcp-fixture")]
-    async fn check_redirected_stateful_workspace_session(cross_origin: bool) {
+    async fn check_redirected_stateful_workspace_session(topology: WorkspaceRedirect) {
         use crate::tools::mcp::fixture::FixtureServer;
         use rmcp::model::ProtocolVersion;
         use rmcp::transport::streamable_http_server::{
@@ -2298,22 +2315,29 @@ mod tests {
             config,
         );
         let issuer = landing_guard.url("/issuer");
+        let relay = if topology == WorkspaceRedirect::SameOrigin {
+            None
+        } else {
+            Some(redirect_fixture(issuer.clone()).await)
+        };
+        let (entry, initialize_redirect) = match topology {
+            WorkspaceRedirect::CrossOrigin => (relay.as_ref().unwrap().0.url("/mcp"), None),
+            WorkspaceRedirect::SameOrigin => (landing_guard.url("/mcp"), Some(issuer)),
+            WorkspaceRedirect::ReturnToStart => (
+                landing_guard.url("/mcp"),
+                Some(relay.as_ref().unwrap().0.url("/mcp")),
+            ),
+        };
         let app = axum::Router::new()
             .nest_service("/issuer", service.clone())
             .nest_service("/mcp", service)
             .layer(axum::middleware::from_fn_with_state(
-                (observed.clone(), (!cross_origin).then(|| issuer.clone())),
+                (observed.clone(), initialize_redirect),
                 observe_stateful_workspace_session,
             ));
         let landing_server = tokio::spawn(async move { axum::serve(landing, app).await.unwrap() });
-        let redirect = if cross_origin {
-            Some(redirect_fixture(issuer).await)
-        } else {
-            None
-        };
-        let entry = redirect.as_ref().map_or(&landing_guard, |(entry, _)| entry);
         let workspace = tempfile::tempdir().unwrap();
-        let runtime = connect_redirected_workspace(entry.url("/mcp"), workspace.path()).await;
+        let runtime = connect_redirected_workspace(entry, workspace.path()).await;
         assert_eq!(runtime.protocol_version(), &ProtocolVersion::V_2025_11_25);
         assert!(
             runtime
@@ -2333,9 +2357,13 @@ mod tests {
             seen.iter()
                 .any(|(method, seen_id, _)| *method == http::Method::POST && seen_id == id)
         );
-        let expected_path = if cross_origin { "/issuer" } else { "/mcp" };
+        let expected_path = if topology == WorkspaceRedirect::SameOrigin {
+            "/mcp"
+        } else {
+            "/issuer"
+        };
         assert!(seen.iter().all(|(_, _, path)| path == expected_path));
-        if let Some((_, server)) = redirect {
+        if let Some((_, server)) = relay {
             server.abort();
         }
         landing_server.abort();

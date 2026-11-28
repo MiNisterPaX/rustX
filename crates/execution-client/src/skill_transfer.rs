@@ -372,6 +372,15 @@ impl Transfer {
         arbitration: &Arbitration,
         byte_limit: u64,
     ) -> io::Result<Reply> {
+        self.publish_with_hook(arbitration, byte_limit, || {})
+    }
+
+    fn publish_with_hook(
+        &mut self,
+        arbitration: &Arbitration,
+        byte_limit: u64,
+        before_commit: impl FnOnce(),
+    ) -> io::Result<Reply> {
         let sync = self.sync.as_mut().ok_or(io::ErrorKind::InvalidInput)?;
         let stage = sync.stage.as_ref().ok_or(io::ErrorKind::InvalidInput)?;
         if stage.file.is_some() {
@@ -381,20 +390,56 @@ impl Transfer {
         stage.data.verify()?;
         let stage_directory = sync.owner.child(OsStr::new(&stage.name))?;
         write_new(&stage_directory, SIZE, stage.bytes.to_string().as_bytes())?;
-        prune(&sync.owner, stage.bytes, byte_limit)?;
+        let reservations = plan_prune(&sync.owner, stage.bytes, byte_limit)?;
+        before_commit();
+        let mut rollback_failed = false;
+        let mut publication_collision = false;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let moved = arbitration.with_grant(|| {
-            rustix::fs::renameat_with(
-                sync.owner.descriptor(),
-                stage.name.as_str(),
-                sync.owner.descriptor(),
-                stage.version.as_str(),
-                rustix::fs::RenameFlags::NOREPLACE,
-            )
-            .map_err(Into::into)
+            let mut retired_count = 0;
+            let result =
+                retire_versions(&sync.owner, &reservations, &mut retired_count).and_then(|()| {
+                    let renamed = rustix::fs::renameat_with(
+                        sync.owner.descriptor(),
+                        stage.name.as_str(),
+                        sync.owner.descriptor(),
+                        stage.version.as_str(),
+                        rustix::fs::RenameFlags::NOREPLACE,
+                    );
+                    publication_collision = renamed == Err(rustix::io::Errno::EXIST);
+                    renamed.map_err(Into::into)
+                });
+            if result.is_err() {
+                let mut rollback_error = None;
+                for (name, retired) in reservations[..retired_count].iter().rev() {
+                    if let Err(error) = rustix::fs::renameat_with(
+                        sync.owner.descriptor(),
+                        retired.as_str(),
+                        sync.owner.descriptor(),
+                        name.as_os_str(),
+                        rustix::fs::RenameFlags::NOREPLACE,
+                    ) {
+                        rollback_error.get_or_insert(error);
+                    }
+                }
+                if let Some(error) = rollback_error {
+                    rollback_failed = true;
+                    return Err(io::Error::other(format!(
+                        "failed to restore a retired Skill version: {error}"
+                    )));
+                }
+            }
+            result
         });
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let moved: io::Result<()> = Err(io::ErrorKind::Unsupported.into());
+        // Cleanup can be slow, so it stays outside the grant. Leave any
+        // unsuccessfully restored directories intact until the next sync's recovery.
+        if !rollback_failed {
+            for (_, retired) in &reservations {
+                let _ = cleanup_work_item(&sync.owner, retired);
+            }
+        }
         match moved {
             Ok(()) => {
                 let stage = sync.stage.take().expect("stage is present");
@@ -414,7 +459,7 @@ impl Transfer {
                         .join("data"),
                 })
             }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            Err(error) if publication_collision && error.kind() == io::ErrorKind::AlreadyExists => {
                 self.abort()?;
                 Ok(Reply::VersionExists)
             }
@@ -779,10 +824,14 @@ fn cleanup_retired_authority(cache: &PackageDirectory, name: &OsStr) -> io::Resu
     Ok(())
 }
 
-/// Evict oldest unleased versions when an incoming package would exceed the
+/// Plan eviction of oldest unleased versions when a package would exceed the
 /// per-authority retention bound. The caller holds the authority lock, so a
-/// version found unleased cannot acquire a new lease during eviction.
-fn prune(owner: &PackageDirectory, incoming: u64, byte_limit: u64) -> io::Result<()> {
+/// version found unleased cannot acquire a new lease during publication.
+fn plan_prune(
+    owner: &PackageDirectory,
+    incoming: u64,
+    byte_limit: u64,
+) -> io::Result<Vec<(PathBuf, String)>> {
     let mut versions = Vec::new();
     let mut bytes = 0u64;
     for name in owner.names(MAX_CACHE_VERSIONS * 2 + 4)? {
@@ -835,7 +884,17 @@ fn prune(owner: &PackageDirectory, incoming: u64, byte_limit: u64) -> io::Result
             }
         }
     }
-    for (name, retired) in selected.iter().zip(&reservations) {
+    Ok(selected.into_iter().zip(reservations).collect())
+}
+
+// The caller holds the mutation grant across these namespace transitions and
+// the new version's publication; recursive cleanup happens afterward.
+fn retire_versions(
+    owner: &PackageDirectory,
+    reservations: &[(PathBuf, String)],
+    retired_count: &mut usize,
+) -> io::Result<()> {
+    for (name, retired) in reservations {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let renamed = rustix::fs::renameat_with(
             owner.descriptor(),
@@ -846,13 +905,19 @@ fn prune(owner: &PackageDirectory, incoming: u64, byte_limit: u64) -> io::Result
         );
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let renamed: Result<(), rustix::io::Errno> = Err(rustix::io::Errno::NOTSUP);
-        if let Err(error) = renamed {
-            // All remaining empty intents are also safe for next-sync recovery.
-            return Err(error.into());
-        }
+        renamed?;
+        *retired_count += 1;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn prune(owner: &PackageDirectory, incoming: u64, byte_limit: u64) -> io::Result<()> {
+    let reservations = plan_prune(owner, incoming, byte_limit)?;
+    retire_versions(owner, &reservations, &mut 0)?;
+    for (_, retired) in &reservations {
         cleanup_work_item(owner, retired)?;
     }
-
     Ok(())
 }
 
@@ -1298,6 +1363,97 @@ mod tests {
             .unwrap(),
             b"x"
         );
+    }
+
+    #[test]
+    fn revoked_after_eviction_planning_preserves_published_version() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("rustx");
+        let collection = super::super::skills::UserSkills::collection_path(&root).unwrap();
+        let mut transfer = Transfer::default();
+        transfer
+            .begin_sync(&root, &collection, &authority())
+            .unwrap();
+        let owner = &transfer.sync.as_ref().unwrap().owner;
+        let old = version('a');
+        let directory = ensure_directory(owner, OsStr::new(&old)).unwrap().0;
+        write_new(&directory, VERSION_MARKER, MARKER_CONTENT).unwrap();
+        write_new(&directory, SIZE, b"1").unwrap();
+        write_new(&directory, LEASE, b"").unwrap();
+        let data = ensure_directory(&directory, OsStr::new("data")).unwrap().0;
+        write_new(&data, "SKILL.md", b"x").unwrap();
+        let new = version('b');
+        transfer.begin_package(&new).unwrap();
+        transfer
+            .begin_file(Path::new("SKILL.md"), 1, false)
+            .unwrap();
+        transfer.chunk(0, "eQ==").unwrap();
+        transfer.end_file().unwrap();
+        let arbitration = Arbitration::new();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                transfer.publish_with_hook(&arbitration, 1, || {
+                    barrier.wait();
+                    barrier.wait();
+                })
+            });
+            // The worker has finished a feasible eviction plan and reserved
+            // the intent, but has yet to request the publication grant.
+            barrier.wait();
+            arbitration.revoke();
+            barrier.wait();
+            assert_eq!(
+                worker.join().unwrap().unwrap_err().kind(),
+                io::ErrorKind::PermissionDenied
+            );
+        });
+        let owner_path = collection.join(CACHE).join(authority());
+        assert_eq!(
+            fs::read(owner_path.join(old).join("data/SKILL.md")).unwrap(),
+            b"x"
+        );
+        assert!(!owner_path.join(new).exists());
+    }
+
+    #[test]
+    fn publication_collision_restores_retired_version() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("rustx");
+        let collection = super::super::skills::UserSkills::collection_path(&root).unwrap();
+        let mut transfer = Transfer::default();
+        transfer
+            .begin_sync(&root, &collection, &authority())
+            .unwrap();
+        let owner = &transfer.sync.as_ref().unwrap().owner;
+        let old = version('a');
+        let directory = ensure_directory(owner, OsStr::new(&old)).unwrap().0;
+        write_new(&directory, VERSION_MARKER, MARKER_CONTENT).unwrap();
+        write_new(&directory, SIZE, b"1").unwrap();
+        write_new(&directory, LEASE, b"").unwrap();
+        let data = ensure_directory(&directory, OsStr::new("data")).unwrap().0;
+        write_new(&data, "SKILL.md", b"x").unwrap();
+        let new = version('b');
+        transfer.begin_package(&new).unwrap();
+        transfer
+            .begin_file(Path::new("SKILL.md"), 1, false)
+            .unwrap();
+        transfer.chunk(0, "eQ==").unwrap();
+        transfer.end_file().unwrap();
+        let owner_path = collection.join(CACHE).join(authority());
+        let collision = owner_path.join(&new);
+        let result = transfer
+            .publish_with_hook(&Arbitration::new(), 1, || {
+                fs::create_dir(&collision).unwrap();
+                fs::write(collision.join("personal"), b"keep").unwrap();
+            })
+            .unwrap();
+        assert_eq!(result, Reply::VersionExists);
+        assert_eq!(
+            fs::read(owner_path.join(old).join("data/SKILL.md")).unwrap(),
+            b"x"
+        );
+        assert_eq!(fs::read(collision.join("personal")).unwrap(), b"keep");
     }
 
     #[test]
