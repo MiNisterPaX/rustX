@@ -53,6 +53,8 @@ mod mutation;
 mod process;
 mod saves;
 mod search;
+mod skill_transfer;
+mod skills;
 mod terminal;
 mod tree;
 mod watch;
@@ -312,6 +314,7 @@ fn run(
             Capability::ManagedOutput,
             Capability::StdioMcp,
             Capability::ManagedPython,
+            Capability::UserSkills,
         ]),
         credential: bootstrap.credential,
     };
@@ -420,6 +423,10 @@ fn recover_pair(
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one Client binding and lane-recovery lifecycle"
+)]
 fn serve_session(
     mut pair: Pair,
     root: &PackageDirectory,
@@ -443,9 +450,12 @@ fn serve_session(
                     mcp: mcp::Sessions::default(),
                     python: managed_python::Catalog::new(&admission.workspace),
                     changes: changes::Changes::default(),
+                    workspace_observation: changes::WorkspaceObservation::default(),
+                    skills: skills::UserSkills::from_environment(),
                     next_ticket: None,
                     mcp_environment: grants,
                 };
+                state.workspace_observation.poll(&operations);
                 let revocation = Arc::new(ClientRevocation::default());
                 let mut recovery_cutoff = None;
                 let mut watches = Arc::new(watch::Watches::new());
@@ -498,6 +508,10 @@ fn serve_session(
                     {
                         break Err(String::from("execution pair violated the protocol"));
                     }
+                    state
+                        .skills
+                        .lane_lost()
+                        .map_err(|_| String::from("unresolved User Skill transfer cleanup"))?;
                     let cutoff = if revocation.started() {
                         *recovery_cutoff.get_or_insert(cutoff)
                     } else {
@@ -956,6 +970,8 @@ struct DataState {
     mcp: mcp::Sessions,
     python: managed_python::Catalog,
     changes: changes::Changes,
+    workspace_observation: changes::WorkspaceObservation,
+    skills: skills::UserSkills,
     next_ticket: Option<u64>,
     mcp_environment: mcp_environment::Grants,
 }
@@ -1021,6 +1037,29 @@ fn serve_requests(
         }
         let reply = match request {
             ClientRequest::Ping => ClientReply::Pong,
+            ClientRequest::UserSkills(request) => {
+                let inquiry = matches!(
+                    request,
+                    rustx_execution_protocol::skills::Request::Root { .. }
+                        | rustx_execution_protocol::skills::Request::RootIdentity
+                        | rustx_execution_protocol::skills::Request::Collection { .. }
+                        | rustx_execution_protocol::skills::Request::Packages { .. }
+                        | rustx_execution_protocol::skills::Request::Standalone { .. }
+                        | rustx_execution_protocol::skills::Request::Digest { .. }
+                );
+                let transfer = if inquiry {
+                    None
+                } else {
+                    operations.admit_auxiliary()
+                };
+                if inquiry || transfer.is_some() {
+                    state.skills.reply(&request, arbitration)
+                } else {
+                    ClientReply::Error {
+                        kind: ReadError::Unavailable,
+                    }
+                }
+            }
             ClientRequest::WorkspacePythonStatus => {
                 ClientReply::WorkspacePythonStatus(operations.workspace_python_status())
             }
@@ -1196,7 +1235,13 @@ fn serve_requests(
                 },
             },
             ClientRequest::Watch(request) => {
-                ClientReply::Watch(watches.dispatch(root, workspace, request))
+                let mut reply = watches.dispatch(root, workspace, request);
+                if let rustx_execution_protocol::watch::WatchReply::Changed(change) = &mut reply
+                    && change.id.is_configuration()
+                {
+                    change.resync_required |= state.workspace_observation.poll(operations);
+                }
+                ClientReply::Watch(reply)
             }
             ClientRequest::ReadDirectory {
                 relative_path,

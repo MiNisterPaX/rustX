@@ -1704,6 +1704,32 @@ fn assert_outcome_unknown(error: &io::Error) {
 }
 
 #[test]
+fn lost_skill_publish_reply_is_unknown_and_not_replayed() {
+    use rustx_execution_protocol::skills::Request;
+    let (binding, hello) = reserved(BTreeSet::from([
+        Capability::Connection,
+        Capability::UserSkills,
+    ]));
+    let (mut connection, mut peer) = live(&binding, &hello);
+    let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = received.clone();
+    let client = thread::spawn(move || {
+        let request: ClientRequest = read_record(&mut peer).unwrap();
+        assert_eq!(request, ClientRequest::UserSkills(Request::Publish));
+        observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // The peer could have published, but the reply is lost.
+        drop(peer);
+    });
+    let error = connection
+        .user_skill_transfer_until(&Request::Publish, Instant::now() + Duration::from_secs(5))
+        .unwrap_err();
+    client.join().unwrap();
+    assert_outcome_unknown(&error);
+    assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(binding.status().phase, BindingPhase::Detached);
+}
+
+#[test]
 fn a_peer_without_the_write_capability_gets_no_request() {
     let (binding, hello) = reserved(BTreeSet::from([Capability::Connection]));
     let (mut connection, mut peer) = live(&binding, &hello);

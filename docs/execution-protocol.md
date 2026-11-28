@@ -74,7 +74,8 @@ and directory-page readers —
 The implemented Client supports authenticated local and WebSocket binding,
 bounded file queries and tree mutations, conditional writes and edits,
 supervised processes, workspace observation, file watches, Workspace
-Python, managed output, stdio MCP and Managed Python. The authenticated Hello advertises the
+Python, managed output, stdio MCP, Managed Python and bounded User Skill
+synchronization. The authenticated Hello advertises the
 individual services that this Client implements. The Server checks the
 specific capability before dispatch.
 

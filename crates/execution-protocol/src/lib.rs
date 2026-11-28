@@ -24,6 +24,7 @@ pub mod mcp;
 pub mod mcp_environment;
 pub mod process;
 pub mod save;
+pub mod skills;
 pub mod transport;
 pub mod watch;
 
@@ -487,6 +488,8 @@ pub enum Capability {
     StdioMcp,
     /// Frozen Managed Python resources and Client-local Store preparation.
     ManagedPython,
+    /// Inquiry and bounded synchronization of the Client's global User Skills.
+    UserSkills,
     /// Bounded byte-chunk content transfer and upload staging.
     ContentTransfer,
     /// Client-owned managed output: private allocation, unpublished
@@ -1079,6 +1082,8 @@ pub enum TreeMutation {
 pub enum ClientRequest {
     /// A liveness probe.
     Ping,
+    /// A narrowly scoped inquiry about the Client's official User Skill root.
+    UserSkills(crate::skills::Request),
     /// One managed-process operation request — register, start, query,
     /// ordered output paging, stdin, resize, close, release.
     Process(crate::process::ProcessRequest),
@@ -1410,6 +1415,8 @@ pub enum EditRefusal {
 pub enum ClientReply {
     /// The reply to a `Ping`.
     Pong,
+    /// The result of a Client User Skill inquiry.
+    UserSkills(crate::skills::Reply),
     /// The reply to a `Process` request.
     Process(crate::process::ProcessReply),
     /// A reply from the Client-owned stdio MCP session.
@@ -1705,6 +1712,8 @@ pub enum ReadError {
     SearchNeedsDirectory,
     /// A directory listing has more than [`MAX_DIRECTORY_NAMES`] entries.
     DirectoryEntryLimit,
+    /// A User Skill transfer or its retained cache exceeds a stated bound.
+    SkillTooLarge,
     /// The read could not be completed for another reason.
     Unavailable,
     /// Bounded preparation or cleanup remains occupied. The operation

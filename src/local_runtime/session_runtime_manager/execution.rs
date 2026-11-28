@@ -18,6 +18,7 @@ pub(super) mod local_sessions;
 mod mcp;
 mod output;
 mod sibling;
+mod skill_sync;
 pub(crate) use mcp::{ReceiveExchange, StdioMcpBinding};
 pub(crate) use output::OutputBinding;
 use sibling::SiblingClient;
@@ -101,7 +102,57 @@ pub struct LocalExecutionEndpoint {
     user_root: std::sync::OnceLock<PathBuf>,
     managed_output: std::sync::OnceLock<bool>,
     stdio_mcp: std::sync::OnceLock<bool>,
+    user_skill_flights: skill_sync::SyncFlights,
     recovery_fence: Option<rustx_execution_server::RecoveryFence>,
+}
+
+/// A physical Client cache pin carried by the copied Skill packages.
+#[derive(Debug)]
+pub(crate) struct UserSkillLease {
+    endpoint: Arc<LocalExecutionEndpoint>,
+    runtime: tokio::runtime::Handle,
+    id: uuid::Uuid,
+}
+
+impl UserSkillLease {
+    fn new(endpoint: Arc<LocalExecutionEndpoint>) -> Self {
+        Self {
+            endpoint,
+            runtime: tokio::runtime::Handle::current(),
+            id: uuid::Uuid::new_v4(),
+        }
+    }
+}
+
+impl PartialEq for UserSkillLease {
+    fn eq(&self, other: &Self) -> bool {
+        // Lease IDs represent independent readers of the same physical
+        // Client. They are never part of a Skill's semantic identity.
+        Arc::ptr_eq(&self.endpoint, &other.endpoint)
+    }
+}
+
+impl Eq for UserSkillLease {}
+
+impl Drop for UserSkillLease {
+    fn drop(&mut self) {
+        let endpoint = Arc::clone(&self.endpoint);
+        let request = rustx_execution_protocol::skills::Request::ReleaseLease { lease: self.id };
+        self.runtime.spawn(async move {
+            let released = endpoint
+                .release_retained_record(move |connection, deadline| {
+                    connection
+                        .user_skill_transfer_until(&request, deadline)
+                        .map(|reply| {
+                            reply == rustx_execution_protocol::skills::Reply::LeaseReleased
+                        })
+                })
+                .await;
+            if !released {
+                endpoint.cut_pair_if_open();
+            }
+        });
+    }
 }
 
 enum Settlement {
@@ -171,9 +222,15 @@ impl Drop for ClientStartupOwner<'_> {
 }
 
 #[cfg(test)]
+type SkillChunkHook = Arc<Mutex<Box<dyn FnMut(u64) + Send>>>;
+
+#[cfg(test)]
 #[derive(Default)]
 struct ExecutionTestHooks {
     expire_bash_capture_query: bool,
+    after_user_skill_capture: Option<Box<dyn FnOnce() + Send>>,
+    after_user_skill_transfer: Option<(u64, Box<dyn FnOnce() + Send>)>,
+    on_user_skill_chunk: Option<SkillChunkHook>,
     local_startup: Option<super::super::configuration::ConfigurationHooks>,
     before_settlement_cleanup: Option<(
         tokio::sync::oneshot::Sender<()>,
@@ -340,6 +397,7 @@ impl LocalExecutionEndpoint {
             user_root: std::sync::OnceLock::new(),
             managed_output: std::sync::OnceLock::new(),
             stdio_mcp: std::sync::OnceLock::new(),
+            user_skill_flights: skill_sync::SyncFlights::default(),
             recovery_fence: None,
             workspace,
         })
@@ -402,6 +460,7 @@ impl LocalExecutionEndpoint {
             user_root: std::sync::OnceLock::new(),
             managed_output: std::sync::OnceLock::new(),
             stdio_mcp: std::sync::OnceLock::new(),
+            user_skill_flights: skill_sync::SyncFlights::default(),
             recovery_fence: None,
             workspace,
         })
@@ -836,6 +895,35 @@ impl LocalExecutionEndpoint {
             self.wait_for_connection_cancellable(deadline, cancellation, dispatch)
                 .await
         })
+    }
+
+    pub(crate) fn user_skills_inquiry(
+        &self,
+        request: &rustx_execution_protocol::skills::Request,
+        deadline: Instant,
+    ) -> io::Result<rustx_execution_protocol::skills::Reply> {
+        self.with_bounded_data_connection(deadline, |connection| {
+            connection.user_skills_until(request, deadline)
+        })
+    }
+
+    /// Inspect the Client-visible `~/rustx` root and an optional fresh probe.
+    pub(crate) fn inspect_user_skill_root(
+        &self,
+        probe: Option<String>,
+        deadline: Instant,
+    ) -> io::Result<(PathBuf, Option<rustx_execution_protocol::skills::Probe>)> {
+        match self.user_skills_inquiry(
+            &rustx_execution_protocol::skills::Request::Root { probe },
+            deadline,
+        )? {
+            rustx_execution_protocol::skills::Reply::Root { path, probe }
+                if self.user_root.get() == Some(&path) =>
+            {
+                Ok((path, probe))
+            }
+            _ => Err(io::ErrorKind::InvalidData.into()),
+        }
     }
 
     pub(crate) fn read_workspace_source<T>(
